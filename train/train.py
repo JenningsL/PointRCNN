@@ -188,6 +188,9 @@ def train_one_epoch(sess, ops, train_writer):
     # To collect statistics
     total_correct = 0
     total_seen = 0
+    total_tp = 0
+    total_fp = 0
+    total_fn = 0
     loss_sum = 0
 
     # Training with batches
@@ -204,7 +207,13 @@ def train_one_epoch(sess, ops, train_writer):
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
         correct = np.sum(preds_val == batch_mask_label)
+        tp = np.sum(np.logical_and(preds_val == batch_mask_label, batch_mask_label == 1))
+        fp = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 0))
+        fn = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 1))
         total_correct += correct
+        total_tp += tp
+        total_fp += fp
+        total_fn += fn
         total_seen += NUM_POINT
         loss_sum += loss_val
 
@@ -214,8 +223,17 @@ def train_one_epoch(sess, ops, train_writer):
             if total_seen > 0:
                 log_string('segmentation accuracy: %f' % \
                     (total_correct / float(total_seen)))
+            if total_tp+total_fn > 0 and total_tp+total_fp > 0:
+                log_string('segmentation recall: %f'% \
+                    (float(total_tp)/(total_tp+total_fn)))
+                log_string('segmentation precision: %f'% \
+                    (float(total_tp)/(total_tp+total_fp)))
             total_correct = 0
             total_seen = 0
+            total_tp = 0
+            total_fp = 0
+            total_fn = 0
+            loss_sum = 0
         if is_last_batch:
             break
         batch_idx += 1
@@ -230,6 +248,9 @@ def eval_one_epoch(sess, ops, test_writer):
     # To collect statistics
     total_correct = 0
     total_seen = 0
+    total_tp = 0
+    total_fp = 0
+    total_fn = 0
     loss_sum = 0
     num_batches = 0
 
@@ -244,6 +265,12 @@ def eval_one_epoch(sess, ops, test_writer):
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
         correct = np.sum(preds_val == batch_mask_label)
+        tp = np.sum(np.logical_and(preds_val == batch_mask_label, batch_mask_label == 1))
+        fp = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 0))
+        fn = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 1))
+        total_tp += tp
+        total_fp += fp
+        total_fn += fn
         total_correct += correct
         total_seen += NUM_POINT
         loss_sum += loss_val
@@ -254,8 +281,12 @@ def eval_one_epoch(sess, ops, test_writer):
     log_string('eval mean loss: %f' % (loss_sum / float(num_batches)))
     log_string('eval segmentation accuracy: %f'% \
         (total_correct / float(total_seen)))
+    log_string('eval segmentation recall: %f'% \
+        (float(total_tp)/(total_tp+total_fn)))
+    log_string('eval segmentation precision: %f'% \
+        (float(total_tp)/(total_tp+total_fp)))
     EPOCH_CNT += 1
-    return mean_loss
+    return loss_sum / float(num_batches)
 
 if __name__ == "__main__":
     log_string('pid: %s'%(str(os.getpid())))
