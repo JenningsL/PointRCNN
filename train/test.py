@@ -91,7 +91,7 @@ def test():
     preds = []
 
     while(True):
-        batch_pc, batch_mask_label, is_last_batch = TEST_DATASET.get_next_batch(1)
+        batch_pc, batch_mask_label, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {ops['pointclouds_pl']: batch_pc,
                      ops['mask_labels_pl']: batch_mask_label,

@@ -197,7 +197,7 @@ def train_one_epoch(sess, ops, train_writer):
     # for batch_idx in range(num_batches):
     batch_idx = 0
     while(True):
-        batch_pc, batch_mask_label, is_last_batch = TRAIN_DATASET.get_next_batch(1)
+        batch_pc, batch_mask_label, is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {ops['pointclouds_pl']: batch_pc,
                      ops['mask_labels_pl']: batch_mask_label,
@@ -214,7 +214,7 @@ def train_one_epoch(sess, ops, train_writer):
         total_tp += tp
         total_fp += fp
         total_fn += fn
-        total_seen += NUM_POINT
+        total_seen += NUM_POINT * BATCH_SIZE
         loss_sum += loss_val
 
         if (batch_idx+1)%10 == 0:
@@ -255,7 +255,7 @@ def eval_one_epoch(sess, ops, test_writer):
     num_batches = 0
 
     while(True):
-        batch_pc, batch_mask_label, is_last_batch = TEST_DATASET.get_next_batch(1)
+        batch_pc, batch_mask_label, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {ops['pointclouds_pl']: batch_pc,
                      ops['mask_labels_pl']: batch_mask_label,
@@ -272,9 +272,9 @@ def eval_one_epoch(sess, ops, test_writer):
         total_fp += fp
         total_fn += fn
         total_correct += correct
-        total_seen += NUM_POINT
+        total_seen += NUM_POINT * BATCH_SIZE
         loss_sum += loss_val
-        num_batches += 1
+        num_batches += BATCH_SIZE
         if is_last_batch:
             break
 
