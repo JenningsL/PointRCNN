@@ -16,8 +16,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 from kitti_object import *
 from parameterize import obj_to_proposal_vec
 import kitti_util as utils
-
-type_whitelist = ['Car']
+type_whitelist = ['Car', 'Pedestrian', 'Cyclist']
 
 def in_hull(p, hull):
     from scipy.spatial import Delaunay
@@ -103,7 +102,11 @@ class Dataset(object):
         objects = self.kitti_dataset.get_label_objects(data_idx)
         image = self.kitti_dataset.get_image(data_idx)
         pc_velo = self.kitti_dataset.get_lidar(data_idx)
-        #print(pc_velo.shape[0])
+        img_height, img_width = image.shape[0:2]
+        _, pc_image_coord, img_fov_inds = get_lidar_in_image_fov(pc_velo[:,0:3],
+            calib, 0, 0, img_width, img_height, True)
+        pc_velo = pc_velo[img_fov_inds, :]
+        #print(data_idx_str, pc_velo.shape[0])
         choice = np.random.choice(pc_velo.shape[0], self.npoints, replace=True)
         point_set = pc_velo[choice, :]
         pc_rect = np.zeros_like(point_set)
@@ -126,7 +129,7 @@ class Dataset(object):
 if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
-    dataset = Dataset(100000, kitti_path, split)
+    dataset = Dataset(20000, kitti_path, split)
     dataset.preprocess(split)
 
     '''
