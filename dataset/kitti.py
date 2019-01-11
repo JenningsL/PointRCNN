@@ -12,8 +12,11 @@ import cPickle as pickle
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'kitti'))
+sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 from kitti_object import *
+from parameterize import obj_to_proposal_vec
 import kitti_util as utils
+
 type_whitelist = ['Car']
 
 def in_hull(p, hull):
@@ -50,10 +53,11 @@ class Dataset(object):
     def preprocess(self, save_path):
         frame_data = {}
         for frame_id in self.frame_ids:
-            pc, mask = self.load_frame_data(frame_id)
+            pc, mask, proposal_of_point = self.load_frame_data(frame_id)
             frame_data['frame_id'] = frame_id
             frame_data['pointcloud'] = pc
             frame_data['mask_label'] = mask
+            frame_data['proposal_of_point'] = proposal_of_point
             with open(os.path.join(save_path, frame_id+'.pkl'),'wb') as fp:
                 pickle.dump(frame_data, fp)
 
@@ -92,9 +96,6 @@ class Dataset(object):
 
     def load_frame_data(self, data_idx_str):
         '''load data for the first time'''
-        # if os.path.exists(os.path.join(self.save_dir, frame_id+'.pkl')):
-        #     with open(os.path.join(self.save_dir, frame_id+'.pkl'), 'rb') as f:
-        #         return pickle.load(f)
         start = time.time()
         data_idx = int(data_idx_str)
         # print(data_idx_str)
@@ -110,11 +111,17 @@ class Dataset(object):
         pc_rect[:,3] = point_set[:,3]
         seg_mask = np.zeros((pc_rect.shape[0]))
         objects = filter(lambda obj: obj.type in type_whitelist, objects)
+        # point index to proposal vector
+        proposal_of_point = {}
         for obj in objects:
             _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
-            _,obj_inds = extract_pc_in_box3d(pc_rect, obj_box_3d)
-            seg_mask[obj_inds] = 1
-        return pc_rect, seg_mask
+            _,obj_mask = extract_pc_in_box3d(pc_rect, obj_box_3d)
+            seg_mask[obj_mask] = 1
+            obj_ids = np.where(obj_mask)[0]
+            for idx in obj_ids:
+                proposal_of_point[idx] = obj_to_proposal_vec(obj, pc_rect[idx,:3])
+
+        return pc_rect, seg_mask, proposal_of_point
 
 if __name__ == '__main__':
     kitti_path = sys.argv[1]

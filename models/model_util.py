@@ -15,7 +15,7 @@ NUM_OBJ_CLASSES = 4 # classification
 # NUM_OBJ_CLASSES = 2
 NUM_HEADING_BIN = 12
 #NUM_SIZE_CLUSTER = 9 # one cluster for each type
-NUM_OBJECT_POINT = 512
+NUM_FG_POINT = 512
 NUM_CHANNEL = 4
 REG_IOU = 0.55
 type_whitelist = ['Car', 'Pedestrian', 'Cyclist', 'NonObject']
@@ -201,9 +201,7 @@ def placeholder_inputs(batch_size, num_point):
 
 
 def point_cloud_masking(point_cloud, logits, end_points, xyz_only=True):
-    ''' Select point cloud with predicted 3D mask,
-    translate coordinates to the masked points centroid.
-
+    ''' Select point cloud with predicted 3D mask
     Input:
         point_cloud: TF tensor in shape (B,N,C)
         logits: TF tensor in shape (B,N,2)
@@ -212,8 +210,7 @@ def point_cloud_masking(point_cloud, logits, end_points, xyz_only=True):
     Output:
         object_point_cloud: TF tensor in shape (B,M,3)
             for simplicity we only keep XYZ here
-            M = NUM_OBJECT_POINT as a hyper-parameter
-        mask_xyz_mean: TF tensor in shape (B,3)
+            M = NUM_FG_POINT as a hyper-parameter
     '''
     batch_size = point_cloud.get_shape()[0].value
     num_point = point_cloud.get_shape()[1].value
@@ -223,16 +220,16 @@ def point_cloud_masking(point_cloud, logits, end_points, xyz_only=True):
     mask_count = tf.tile(tf.reduce_sum(mask,axis=1,keep_dims=True),
         [1,1,3]) # Bx1x3
     point_cloud_xyz = tf.slice(point_cloud, [0,0,0], [-1,-1,3]) # BxNx3
-    mask_xyz_mean = tf.reduce_sum(tf.tile(mask, [1,1,3])*point_cloud_xyz,
-        axis=1, keep_dims=True) # Bx1x3
+    # mask_xyz_mean = tf.reduce_sum(tf.tile(mask, [1,1,3])*point_cloud_xyz,
+    #     axis=1, keep_dims=True) # Bx1x3
     mask = tf.squeeze(mask, axis=[2]) # BxN
     end_points['mask'] = mask
-    mask_xyz_mean = mask_xyz_mean/tf.maximum(mask_count,1) # Bx1x3
+    # mask_xyz_mean = mask_xyz_mean/tf.maximum(mask_count,1) # Bx1x3
 
     # Translate to masked points' centroid
-    point_cloud_xyz_stage1 = point_cloud_xyz - \
-        tf.tile(mask_xyz_mean, [1,num_point,1])
-
+    # point_cloud_xyz_stage1 = point_cloud_xyz - \
+    #     tf.tile(mask_xyz_mean, [1,num_point,1])
+    point_cloud_xyz_stage1 = point_cloud_xyz
     if xyz_only:
         point_cloud_stage1 = point_cloud_xyz_stage1
     else:
@@ -242,10 +239,10 @@ def point_cloud_masking(point_cloud, logits, end_points, xyz_only=True):
     num_channels = point_cloud_stage1.get_shape()[2].value
 
     object_point_cloud, _ = tf_gather_object_pc(point_cloud_stage1,
-        mask, NUM_OBJECT_POINT)
-    object_point_cloud.set_shape([batch_size, NUM_OBJECT_POINT, num_channels])
+        mask, NUM_FG_POINT)
+    object_point_cloud.set_shape([batch_size, NUM_FG_POINT, num_channels])
 
-    return object_point_cloud, tf.squeeze(mask_xyz_mean, axis=1), end_points
+    return object_point_cloud, end_points
 
 
 def get_center_regression_net(object_point_cloud, one_hot_vec,
