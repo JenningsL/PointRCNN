@@ -4,52 +4,17 @@ import os
 import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
+sys.path.append(os.path.join(BASE_DIR, 'utils'))
+from parameterize import NUM_CENTER_BIN, NUM_HEADING_BIN, type_mean_size
 import tf_util
 from tensorflow.python.ops import array_ops
 
 # -----------------
 # Global Constants
 # -----------------
-
-NUM_SEG_CLASSES = 2 # segmentation has two classes
-NUM_OBJ_CLASSES = 4 # classification
-# NUM_OBJ_CLASSES = 2
-NUM_HEADING_BIN = 12
-#NUM_SIZE_CLUSTER = 9 # one cluster for each type
 NUM_FG_POINT = 512
 NUM_CHANNEL = 4
-REG_IOU = 0.55
 type_whitelist = ['Car', 'Pedestrian', 'Cyclist', 'NonObject']
-# type_whitelist = ['Car', 'NonObject']
-'''
-g_type2class={'Car':0, 'Van':1, 'Truck':2, 'Pedestrian':3,
-              'Person_sitting':4, 'Cyclist':5, 'Tram':6, 'Misc':7, 'NonObject': 8}
-'''
-g_type2class = {'Car': 0, 'Pedestrian': 1, 'Cyclist': 2, 'NonObject': 3}
-# g_type2class={'Car':0, 'NonObject': 1}
-g_class2type = {g_type2class[t]:t for t in g_type2class}
-g_type2onehotclass = {'Car': 0, 'Pedestrian': 1, 'Cyclist': 2, 'NonObject': 3}
-# g_type2onehotclass = {'Car': 0, 'NonObject': 1}
-# g_type_mean_size = {'Car': np.array([3.88311640418,1.62856739989,1.52563191462]),
-#                     'Van': np.array([5.06763659,1.9007158,2.20532825]),
-#                     'Truck': np.array([10.13586957,2.58549199,3.2520595]),
-#                     'Pedestrian': np.array([0.84422524,0.66068622,1.76255119]),
-#                     'Person_sitting': np.array([0.80057803,0.5983815,1.27450867]),
-#                     'Cyclist': np.array([1.76282397,0.59706367,1.73698127]),
-#                     'Tram': np.array([16.17150617,2.53246914,3.53079012]),
-#                     'Misc': np.array([3.64300781,1.54298177,1.92320313]),
-#                     'NonObject': np.array([1.0, 1.0, 1.0])}
-g_type_mean_size = {'Car': np.array([3.88311640418,1.62856739989,1.52563191462]),
-                    'Pedestrian': np.array([0.84422524,0.66068622,1.76255119]),
-                    'Cyclist': np.array([1.76282397,0.59706367,1.73698127]),
-                    'NonObject': np.array([1.0, 1.0, 1.0])}
-'''
-g_type_mean_size = {'Car': np.array([3.88311640418,1.62856739989,1.52563191462]), 'NonObject': np.array([1.0, 1.0, 1.0])}
-'''
-NUM_SIZE_CLUSTER = len(g_type_mean_size.keys())
-g_mean_size_arr = np.zeros((NUM_SIZE_CLUSTER, 3)) # size clustrs
-for i in range(NUM_SIZE_CLUSTER):
-    g_mean_size_arr[i,:] = g_type_mean_size[g_class2type[i]]
 
 # -----------------
 # TF Functions Helpers
@@ -128,7 +93,7 @@ def get_box3d_corners(center, heading_residuals, size_residuals):
     heading_bin_centers = tf.constant(np.arange(0,2*np.pi,2*np.pi/NUM_HEADING_BIN), dtype=tf.float32) # (NH,)
     headings = heading_residuals + tf.expand_dims(heading_bin_centers, 0) # (B,NH)
 
-    mean_sizes = tf.expand_dims(tf.constant(g_mean_size_arr, dtype=tf.float32), 0) + size_residuals # (B,NS,1)
+    mean_sizes = tf.expand_dims(tf.constant(type_mean_size, dtype=tf.float32), 0) + size_residuals # (B,NS,1)
     sizes = mean_sizes + size_residuals # (B,NS,3)
     sizes = tf.tile(tf.expand_dims(sizes,1), [1,NUM_HEADING_BIN,1,1]) # (B,NH,NS,3)
     headings = tf.tile(tf.expand_dims(headings,-1), [1,1,NUM_SIZE_CLUSTER]) # (B,NH,NS)
@@ -180,35 +145,47 @@ def focal_loss(prediction_tensor, target_tensor, weights=None, alpha=0.25, gamma
 def parse_output_to_tensors(output, end_points):
     ''' Parse batch output to separate tensors (added to end_points)
     Input:
-        output: TF tensor in shape (B,3+2*NUM_HEADING_BIN+4*NUM_SIZE_CLUSTER)
+        output: TF tensor in shape (B,N,2+NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4)
         end_points: dict
     Output:
         end_points: dict (updated)
     '''
     batch_size = output.get_shape()[0].value
-    center = tf.slice(output, [0,0], [-1,3])
-    end_points['center_boxnet'] = center
-
-    heading_scores = tf.slice(output, [0,3], [-1,NUM_HEADING_BIN])
-    heading_residuals_normalized = tf.slice(output, [0,3+NUM_HEADING_BIN],
-        [-1,NUM_HEADING_BIN])
-    end_points['heading_scores'] = heading_scores # BxNUM_HEADING_BIN
-    end_points['heading_residuals_normalized'] = \
-        heading_residuals_normalized # BxNUM_HEADING_BIN (-1 to 1)
-    end_points['heading_residuals'] = \
-        heading_residuals_normalized * (np.pi/NUM_HEADING_BIN) # BxNUM_HEADING_BIN
-
-    size_scores = tf.slice(output, [0,3+NUM_HEADING_BIN*2],
-        [-1,NUM_SIZE_CLUSTER]) # BxNUM_SIZE_CLUSTER
+    npoints = output.get_shape()[1].value
+    # objectness and center
+    end_points['objectness'] = tf.slice(output, [0,0,0], [-1,-1,2])
+    center_x_scores = tf.slice(output, [0,0,2], [-1,-1,NUM_CENTER_BIN])
+    center_x_residuals_normalized = tf.slice(output, [0,0,2+NUM_CENTER_BIN],
+        [-1,-1,NUM_CENTER_BIN])
+    end_points['center_x_scores'] = center_x_scores # (B,N,NUM_CENTER_BIN)
+    end_points['center_x_residuals_normalized'] = \
+        bin_x_residuals_normalized # (B,N,NUM_CENTER_BIN)
+    center_z_scores = tf.slice(output, [0,0,2+NUM_CENTER_BIN*2], [-1,-1,NUM_CENTER_BIN])
+    center_z_residuals_normalized = tf.slice(output, [0,0,2+NUM_CENTER_BIN*3],
+        [-1,-1,NUM_CENTER_BIN])
+    end_points['center_z_scores'] = center_z_scores # (B,N,NUM_CENTER_BIN)
+    end_points['center_z_residuals_normalized'] = \
+        center_z_residuals_normalized # (B,N,NUM_CENTER_BIN)
+    end_points['center_y_residuals'] = tf.slice(output, [0,0,2+NUM_CENTER_BIN*4], [-1,-1,1])
+    # heading
+    heading_scores = tf.slice(output, [0,0,2+NUM_CENTER_BIN*4+1], [-1,-1,NUM_HEADING_BIN])
+    heading_residuals_normalized = tf.slice(output, [0,0,2+NUM_CENTER_BIN*4+1+NUM_HEADING_BIN],
+        [-1,-1,NUM_HEADING_BIN])
+    end_points['heading_scores'] = heading_scores # (B,N,NUM_HEADING_BIN)
+    end_points['heading_residuals_normalized'] = heading_residuals_normalized # (B,N,NUM_HEADING_BIN)
+    # end_points['heading_residuals'] = \
+    #     heading_residuals_normalized * (np.pi/NUM_HEADING_BIN) # BxNUM_HEADING_BIN
+    # size
+    size_scores = tf.slice(output, [0,0,2+NUM_CENTER_BIN*4+1+NUM_HEADING_BIN*2],
+        [-1,-1,NUM_SIZE_CLUSTER]) # BxNUM_SIZE_CLUSTER
     size_residuals_normalized = tf.slice(output,
-        [0,3+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER], [-1,NUM_SIZE_CLUSTER*3])
+        [0,0,2+NUM_CENTER_BIN*4+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER], [-1,-1,NUM_SIZE_CLUSTER*3])
     size_residuals_normalized = tf.reshape(size_residuals_normalized,
-        [batch_size, NUM_SIZE_CLUSTER, 3]) # BxNUM_SIZE_CLUSTERx3
+        [batch_size, npoints, NUM_SIZE_CLUSTER, 3])
     end_points['size_scores'] = size_scores
     end_points['size_residuals_normalized'] = size_residuals_normalized
-    end_points['size_residuals'] = size_residuals_normalized * \
-        tf.expand_dims(tf.constant(g_mean_size_arr, dtype=tf.float32), 0)
-
+    # end_points['size_residuals'] = size_residuals_normalized * \
+    #     tf.expand_dims(tf.constant(type_mean_size, dtype=tf.float32), 0)
     return end_points
 
 # --------------------------------------
@@ -226,8 +203,19 @@ def placeholder_inputs(batch_size, num_point):
     pointclouds_pl = tf.placeholder(tf.float32,
         shape=(batch_size, num_point, NUM_CHANNEL))
     seg_labels_pl = tf.placeholder(tf.int32, shape=(batch_size, num_point))
-
-    return pointclouds_pl, seg_labels_pl
+    objectness_labels = tf.placeholder(tf.int32, shape=(batch_size, num_point))
+    center_bin_x_labels = tf.placeholder(tf.int32, shape=(batch_size, num_point))
+    center_bin_z_labels = tf.placeholder(tf.int32, shape=(batch_size, num_point))
+    center_x_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point))
+    center_z_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point))
+    center_y_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point))
+    heading_bin_labels = tf.placeholder(tf.int32, shape=(batch_size, num_point))
+    heading_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point))
+    size_class_labels = tf.placeholder(tf.int32, shape=(batch_size, num_point))
+    size_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point, 3))
+    return pointclouds_pl, seg_labels_pl, objectness_labels, center_bin_x_labels, center_bin_z_labels,\
+        center_x_residuals_labels, center_z_residuals_labels, center_y_residuals_labels, heading_bin_labels,\
+        heading_residuals_labels, size_class_labels, size_residuals_labels
 
 
 def point_cloud_masking(point_cloud, logits, end_points, xyz_only=True):
@@ -313,9 +301,75 @@ def get_center_regression_net(object_point_cloud, one_hot_vec,
     return predicted_center, end_points
 
 
-def get_loss(mask_label, end_points):
+def get_loss(labels, end_points):
+    batch_size = end_points['foreground_logits'].get_shape()[0].value
+    npoints = end_points['foreground_logits'].get_shape()[1].value
     # 3D Segmentation loss
-    #mask_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
-    #    logits=end_points['foreground_logits'], labels=mask_label))
+    mask_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
+       logits=end_points['foreground_logits'], labels=labels['mask_label']))
     mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(mask_label, 2, axis=-1))
+    props = end_points['proposals']
+    # TODO: mask foreground points
+    # Center loss
+    objectness_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
+       logits=end_points['objectness'], labels=labels['objectness']))
+    center_x_cls_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
+       logits=end_points['center_x_sc   ores'], labels=labels['center_bin_x']))
+    center_z_cls_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
+       logits=end_points['center_z_scores'], labels=labels['center_bin_z']))
+    bin_x_onehot = tf.one_hot(labels['center_bin_x'],
+        depth=NUM_CENTER_BIN,
+        on_value=1, off_value=0, axis=-1) # BxNxNUM_CENTER_BIN
+    # NOTICE: labels['center_x_residuals'] is already normalized
+    center_x_residuals_normalized = tf.reduce_sum(end_points['center_x_residuals_normalized']*bin_x_onehot, axis=2) # BxN
+    center_x_residuals_dist = tf.norm(labels['center_x_residuals'] - center_x_residuals_normalized, axis=-1)
+    center_x_res_loss = huber_loss(center_x_residuals_dist, delta=1.0)
+    bin_z_onehot = tf.one_hot(labels['center_bin_z'],
+        depth=NUM_CENTER_BIN,
+        on_value=1, off_value=0, axis=-1) # BxNxNUM_CENTER_BIN
+    center_z_residuals_normalized = tf.reduce_sum(end_points['center_z_residuals_normalized']*bin_z_onehot, axis=2) # BxN
+    center_z_residuals_dist = tf.norm(labels['center_z_residuals'] - center_x_residuals_normalized, axis=-1)
+    center_z_res_loss = huber_loss(center_z_residuals_dist, delta=1.0)
+    # y is directly regressed
+    center_y_residuals_dist = tf.norm(end_points['center_y_residuals'] - labels['center_y_residuals'], axis=-1)
+    center_y_res_loss = huber_loss(center_y_residuals_dist, delta=1.0)
+    # Heading loss
+    heading_class_loss = tf.reduce_mean( \
+        tf.nn.sparse_softmax_cross_entropy_with_logits( \
+        logits=end_points['heading_scores'], labels=labels['heading_bin']))
+    hcls_onehot = tf.one_hot(labels['heading_bin'],
+        depth=NUM_HEADING_BIN,
+        on_value=1, off_value=0, axis=-1) # BxNxNUM_HEADING_BIN
+    heading_residual_normalized_label = \
+        labels['heading_residuals'] / (np.pi/NUM_HEADING_BIN)
+    heading_res_loss = huber_loss(tf.reduce_sum( \
+        end_points['heading_residuals_normalized']*tf.to_float(hcls_onehot), axis=2) - \
+        heading_residual_normalized_label, delta=1.0)
+    # Size loss
+    size_class_loss = tf.reduce_mean( \
+        tf.nn.sparse_softmax_cross_entropy_with_logits( \
+        logits=end_points['size_scores'], labels=labels['size_class']))
+
+    scls_onehot = tf.one_hot(labels['size_class'],
+        depth=NUM_SIZE_CLUSTER,
+        on_value=1, off_value=0, axis=-1) # BxNxNUM_SIZE_CLUSTER
+    scls_onehot_tiled = tf.tile(tf.expand_dims( \
+        tf.to_float(scls_onehot), -1), [1,1,1,3]) # BxNxNUM_SIZE_CLUSTERx3
+    predicted_size_residual_normalized = tf.reduce_sum( \
+        end_points['size_residuals_normalized']*scls_onehot_tiled, axis=2) # BxNx3
+
+    mean_size_arr_expand = tf.expand_dims(tf.expand_dims( \
+        tf.constant(type_mean_size, dtype=tf.float32),0), 0) # NUM_SIZE_CLUSTERx3 -> 1x1xNUM_SIZE_CLUSTERx3
+    mean_size_arr_expand_tiled = tf.tile(mean_size_arr_expand, [batch_size, npoints, 1, 1])
+    mean_size_label = tf.reduce_sum( \
+        scls_onehot_tiled * mean_size_arr_expand_tiled, axis=2) # BxNx3
+    size_residual_label_normalized = labels['size_residuals'] / mean_size_label # BxNx3
+
+    size_dist = tf.norm(size_residual_label_normalized - predicted_size_residual_normalized, axis=-1)
+    size_res_loss = huber_loss(size_dist, delta=1.0)
+
+    total_loss = mask_loss + objectness_loss + center_x_cls_loss + center_z_cls_loss +\
+        center_x_res_loss + center_z_res_loss + center_y_res_loss + heading_class_loss + \
+        heading_res_loss + size_class_loss + size_res_loss
+
     return mask_loss

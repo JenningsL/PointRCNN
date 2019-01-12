@@ -10,10 +10,10 @@ sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 import tf_util
 from pointnet_util import pointnet_sa_module, pointnet_sa_module_msg, pointnet_fp_module
-from model_util import NUM_HEADING_BIN, NUM_SIZE_CLUSTER, NUM_OBJECT_POINT
-from model_util import NUM_SEG_CLASSES, NUM_OBJ_CLASSES, NUM_CHANNEL
 from model_util import point_cloud_masking
 from model_util import placeholder_inputs, parse_output_to_tensors, get_loss
+from model_util import NUM_CHANNEL
+from parameterize import NUM_HEADING_BIN, NUM_SIZE_CLUSTER
 
 def get_segmentation_net(point_cloud, is_training, bn_decay, end_points):
     ''' 3D instance segmentation PointNet v2 network.
@@ -76,10 +76,13 @@ def get_region_proposal_net(point_feats, is_training, bn_decay, end_points):
         is_training=is_training, scope='rp-fc2', bn_decay=bn_decay)
 
     # The first 2 numbers: box objectness logits,
-    # the next NUM_CENTER_BIN*NUM_CENTER_BIN*3: CENTER_BIN class scores and bin residuals(x,z)
+    # the next NUM_CENTER_BIN*2*2: CENTER_BIN class scores and bin residuals for (x,z)
+    # next 1: center residual for y
     # next NUM_HEADING_BIN*2: heading bin class scores and residuals
+    # next NUM_SIZE_CLUSTER*4: size cluster class scores and residuals(l,w,h)
     output = tf_util.fully_connected(net,
-        2+NUM_CENTER_BIN*NUM_CENTER_BIN*3+NUM_HEADING_BIN*2, activation_fn=None, scope='rp-fc3')
+        2+NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4,
+        activation_fn=None, scope='rp-fc3')
     end_points['proposals'] = output
     return output
 
@@ -89,7 +92,9 @@ def get_model(point_cloud, is_training, bn_decay, end_points):
         end_points['point_feats'], end_points['foreground_logits'],
         end_points, xyz_only=False)
     proposals = get_region_proposal_net(fg_point_feats, is_training, bn_decay, end_points)
-
+    # Parse output to 3D box parameters
+    end_points = parse_output_to_tensors(proposals, end_points)
+    return end_points
 
 if __name__=='__main__':
     with tf.Graph().as_default():

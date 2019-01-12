@@ -76,22 +76,67 @@ class Dataset(object):
             item = self.data_buffer.get()
             self.data_buffer.task_done()
 
+    def get_proposal_out(self, frame_data):
+        objectness = np.zeros((self.npoints,), dtype=np.int32)
+        center_cls = np.zeros((self.npoints,2), dtype=np.int32)
+        angle_cls = np.zeros((self.npoints,), dtype=np.int32)
+        size_cls = np.zeros((self.npoints,), dtype=np.int32)
+        center_res = np.zeros((self.npoints, 3))
+        angle_res = np.zeros((self.npoints, 1))
+        size_res = np.zeros((self.npoints, 3))
+        for i, prop in frame_data['proposal_of_point'].items():
+            objectness[i] = 1
+            center_cls[i] = prop[0]
+            center_res[i] = prop[1]
+            angle_cls[i] = prop[2]
+            angle_res[i] = prop[3]
+            size_cls[i] = prop[4]
+            size_res[i] = prop[5]
+        return objectness, center_cls, center_res, angle_cls, angle_res, size_cls, size_res
+
     def get_next_batch(self, bsize):
         is_last_batch = False
         total_batch = len(self.frame_ids) / bsize
 
         batch_data = np.zeros((bsize, self.npoints, self.num_channel))
         batch_label = np.zeros((bsize, self.npoints), dtype=np.int32)
+        # proposal output for each point
+        batch_objectness = np.zeros((bsize, self.npoints), dtype=np.int32)
+        batch_center_x_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
+        batch_center_z_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
+        batch_center_x_res = np.zeros((bsize, self.npoints))
+        batch_center_y_res = np.zeros((bsize, self.npoints))
+        batch_center_z_res = np.zeros((bsize, self.npoints))
+        batch_angle_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
+        batch_size_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
+        batch_angle_res = np.zeros((bsize, self.npoints, 1))
+        batch_size_res = np.zeros((bsize, self.npoints, 3))
         for i in range(bsize):
             frame = self.data_buffer.get()
+            objectness, center_cls, center_res, angle_cls, angle_res, size_cls, size_res = \
+                get_proposal_out(frame)
             batch_data[i,...] = frame['pointcloud']
             batch_label[i,:] = frame['mask_label']
+            batch_objectness[i,...] = objectness
+            batch_center_x_cls[i,...] = center_cls[:,0]
+            batch_center_z_cls[i,...] = center_cls[:,1]
+            batch_center_x_res[i,...] = center_res[:,0]
+            batch_center_y_res[i,...] = center_res[:,1]
+            batch_center_z_res[i,...] = center_res[:,2]
+            batch_angle_cls[i,...] = angle_cls
+            batch_size_cls[i,...] = size_cls
+            # batch_center_res[i,...] = center_res
+            batch_angle_res[i,...] = angle_res
+            batch_size_res[i,...] = size_res
         if self.batch_idx == total_batch - 1:
             is_last_batch = True
             self.batch_idx = 0
         else:
             self.batch_idx += 1
-        return batch_data, batch_label, is_last_batch
+        return batch_data, batch_label, batch_objectness, batch_center_x_cls,\
+            batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
+            batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
+            batch_size_res, is_last_batch
 
     def load_frame_data(self, data_idx_str):
         '''load data for the first time'''

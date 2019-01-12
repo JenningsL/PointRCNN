@@ -98,7 +98,11 @@ def train():
 
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            pointclouds_pl, mask_labels_pl = MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
+            pointclouds_pl, mask_labels_pl, objectness_pl, \
+            center_bin_x_pl, center_bin_z_pl,\
+            center_x_residuals_pl, center_z_residuals_pl, center_y_residuals_pl, heading_bin_pl,\
+            heading_residuals_pl, size_class_pl, size_residuals_pl \
+                = MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
 
             is_training_pl = tf.placeholder(tf.bool, shape=())
 
@@ -112,9 +116,22 @@ def train():
 
             # Get model and losses
             end_points = {}
+            labels_pl = {
+                'mask_label': mask_labels_pl,
+                'objectness': objectness_pl,
+                'center_bin_x': center_bin_x_pl,
+                'center_bin_z': center_bin_z_pl,
+                'center_x_residuals': center_x_residuals_pl,
+                'center_z_residuals': center_z_residuals_pl,
+                'center_y_residuals': center_y_residuals_pl,
+                'heading_bin': heading_bin_pl,
+                'heading_residuals': heading_residuals_pl,
+                'size_class': size_class_pl,
+                'size_residuals': size_residuals_pl
+            }
             end_points = MODEL.get_model(pointclouds_pl,
                 is_training_pl, bn_decay, end_points)
-            loss = MODEL.get_loss(mask_labels_pl, end_points)
+            loss = MODEL.get_loss(labels_pl, end_points)
 
             # Get training operator
             learning_rate = get_learning_rate(batch)
@@ -154,12 +171,12 @@ def train():
 
         ops = {
             'pointclouds_pl': pointclouds_pl,
-            'mask_labels_pl': mask_labels_pl,
             'is_training_pl': is_training_pl,
             'loss': loss,
             'train_op': train_op,
             'step': batch,
             'end_points': end_points}
+        ops.update(labels_pl)
 
         for epoch in range(MAX_EPOCH):
             log_string('**** EPOCH %03d ****' % (epoch))
@@ -197,11 +214,27 @@ def train_one_epoch(sess, ops, train_writer):
     # for batch_idx in range(num_batches):
     batch_idx = 0
     while(True):
-        batch_pc, batch_mask_label, is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
+        batch_pc, batch_mask_label, batch_objectness, \
+        batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
+        batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
+        batch_heading_residuals, batch_size_class, batch_size_residuals, \
+        is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
 
-        feed_dict = {ops['pointclouds_pl']: batch_pc,
-                     ops['mask_labels_pl']: batch_mask_label,
-                     ops['is_training_pl']: is_training,}
+        feed_dict = {
+            ops['pointclouds_pl']: batch_pc,
+            ops['mask_label']: batch_mask_label,
+            ops['objectness']: batch_objectness,
+            ops['center_bin_x']: batch_center_bin_x,
+            ops['center_bin_z']: batch_center_bin_z,
+            ops['center_x_residuals']: batch_center_x_residuals,
+            ops['center_y_residuals']: batch_center_y_residuals,
+            ops['center_z_residuals']: batch_center_z_residuals,
+            ops['heading_bin']: batch_heading_bin,
+            ops['heading_residuals']: batch_heading_residuals,
+            ops['size_class']: batch_size_class,
+            ops['size_residuals']: batch_size_residuals,
+            ops['is_training_pl']: is_training,
+        }
         loss_val, _, logits_val = sess.run([ops['loss'], ops['train_op'], ops['end_points']['foreground_logits']], feed_dict=feed_dict)
 
         # segmentation acc
@@ -255,11 +288,28 @@ def eval_one_epoch(sess, ops, test_writer):
     num_batches = 0
 
     while(True):
-        batch_pc, batch_mask_label, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
+        batch_pc, batch_mask_label, batch_objectness, \
+        batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
+        batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
+        batch_heading_residuals, batch_size_class, batch_size_residuals, \
+        is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
 
-        feed_dict = {ops['pointclouds_pl']: batch_pc,
-                     ops['mask_labels_pl']: batch_mask_label,
-                     ops['is_training_pl']: is_training,}
+        feed_dict = {
+            ops['pointclouds_pl']: batch_pc,
+            ops['mask_label']: batch_mask_label,
+            ops['objectness']: batch_objectness,
+            ops['center_bin_x']: batch_center_bin_x,
+            ops['center_bin_z']: batch_center_bin_z,
+            ops['center_x_residuals']: batch_center_x_residuals,
+            ops['center_y_residuals']: batch_center_y_residuals,
+            ops['center_z_residuals']: batch_center_z_residuals,
+            ops['heading_bin']: batch_heading_bin,
+            ops['heading_residuals']: batch_heading_residuals,
+            ops['size_class']: batch_size_class,
+            ops['size_residuals']: batch_size_residuals,
+            ops['is_training_pl']: is_training,
+        }
+
         loss_val, logits_val = sess.run([ops['loss'], ops['end_points']['foreground_logits']], feed_dict=feed_dict)
 
         # segmentation acc

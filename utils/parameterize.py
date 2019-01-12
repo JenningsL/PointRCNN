@@ -1,15 +1,16 @@
 import numpy as np
 import math
 
-CENTER_SEARCH_RANGE = 3.8 # in meters
-NUM_CENTER_BIN = 19 # must be odd
-CENTER_BIN_SIZE = CENTER_SEARCH_RANGE / NUM_CENTER_BIN # in one direction
+CENTER_SEARCH_RANGE = 3.9 # in meters
+NUM_CENTER_BIN = 6 # must be odd
+CENTER_BIN_SIZE = CENTER_SEARCH_RANGE * 2 / NUM_CENTER_BIN # in one direction
 NUM_HEADING_BIN = 12
 
 # Car, Pedestrian, Cyclist
 type_mean_size = np.array([[3.88311640418,1.62856739989,1.52563191462],
     [0.84422524,0.66068622,1.76255119],
     [1.76282397,0.59706367,1.73698127]])
+NUM_SIZE_CLUSTER = type_mean_size.shape[0] # one cluster for each type
 
 def angle2class(angle, num_class):
     ''' Convert continuous angle to discrete class and residual.
@@ -66,23 +67,24 @@ def class2size(pred_cls, residual):
 def obj_to_proposal_vec(obj, point):
     '''convert box3d related to a point to proposal vector'''
     # use point as origin
+    obj_center = obj.t
     center = obj.t - point
-    # center_cls = np.zeros((NUM_CENTER_BIN*NUM_CENTER_BIN,))
-    center_res = np.zeros((2,))
-    c_x = center[0] / CENTER_BIN_SIZE + NUM_CENTER_BIN / 2
-    c_z = center[2] / CENTER_BIN_SIZE + NUM_CENTER_BIN / 2
-    c_x = max(min(NUM_CENTER_BIN-1, c_x), 0)
-    c_z = max(min(NUM_CENTER_BIN-1, c_z), 0)
-    # center_cls[int(c_z*NUM_CENTER_BIN+c_x)] = 1
-    center_cls = int(c_z*NUM_CENTER_BIN+c_x)
-    bin_center = np.array([
-        (c_x - NUM_CENTER_BIN / 2) * CENTER_BIN_SIZE,
-        0,
-        (c_z - NUM_CENTER_BIN / 2) * CENTER_BIN_SIZE
+    bin_x = int((obj_center[0] - point[0] + CENTER_SEARCH_RANGE) / CENTER_BIN_SIZE)
+    bin_z = int((obj_center[2] - point[2] + CENTER_SEARCH_RANGE) / CENTER_BIN_SIZE)
+    center_cls = np.array([bin_x, bin_z])
+    center_res = np.array([
+        1/CENTER_BIN_SIZE * (obj_center[0] - point[0] + CENTER_SEARCH_RANGE - (bin_x+0.5)*CENTER_BIN_SIZE),
+        obj_center[1] - point[1],
+        1/CENTER_BIN_SIZE * (obj_center[2] - point[2] + CENTER_SEARCH_RANGE - (bin_z+0.5)*CENTER_BIN_SIZE),
     ])
-    center_res = center - bin_center
-    # true center = point + bin_center + center_res
-    # print(obj.t, point + bin_center + center_res)
+    # recover true center from center_cls and center_res
+    # bin_center = np.array([
+    #     bin_x * CENTER_BIN_SIZE + CENTER_BIN_SIZE/2 - CENTER_SEARCH_RANGE + point[0],
+    #     point[1],
+    #     bin_z * CENTER_BIN_SIZE + CENTER_BIN_SIZE/2 - CENTER_SEARCH_RANGE + point[2]
+    # ])
+    # center_recover = bin_center + np.array([center_res[0]*CENTER_BIN_SIZE, center_res[1], center_res[2]*CENTER_BIN_SIZE])
+    # print(obj_center, center_recover)
     ## encode heading
     angle_cls, angle_res = angle2class(obj.ry, NUM_HEADING_BIN)
     # print(angle_cls, angle_res)
