@@ -12,8 +12,8 @@ import tf_util
 from pointnet_util import pointnet_sa_module, pointnet_sa_module_msg, pointnet_fp_module
 from model_util import point_cloud_masking
 from model_util import placeholder_inputs, parse_output_to_tensors, get_loss
-from model_util import NUM_CHANNEL
-from parameterize import NUM_HEADING_BIN, NUM_SIZE_CLUSTER
+from model_util import NUM_CHANNEL, NUM_FG_POINT
+from parameterize import NUM_HEADING_BIN, NUM_SIZE_CLUSTER, NUM_CENTER_BIN
 
 def get_segmentation_net(point_cloud, is_training, bn_decay, end_points):
     ''' 3D instance segmentation PointNet v2 network.
@@ -68,7 +68,10 @@ def get_segmentation_net(point_cloud, is_training, bn_decay, end_points):
     return end_points
 
 def get_region_proposal_net(point_feats, is_training, bn_decay, end_points):
-    point_feats = tf.slice(point_feats, [0,0,3], [-1,-1,-1]) # (N, D)
+    batch_size = point_feats.get_shape()[0].value
+    npoints = point_feats.get_shape()[1].value
+    point_feats = tf.slice(point_feats, [0,0,3], [-1,-1,-1]) # (B, N, D)
+    net = tf.reshape(point_feats, [batch_size * npoints, -1])
     # Fully connected layers
     net = tf_util.fully_connected(net, 512, bn=True,
         is_training=is_training, scope='rp-fc1', bn_decay=bn_decay)
@@ -90,10 +93,12 @@ def get_model(point_cloud, is_training, bn_decay, end_points):
     end_points = get_segmentation_net(point_cloud, is_training, bn_decay, end_points)
     fg_point_feats, end_points = point_cloud_masking(
         end_points['point_feats'], end_points['foreground_logits'],
-        end_points, xyz_only=False)
+        end_points, xyz_only=False) # BxNUM_FG_POINTxD
     proposals = get_region_proposal_net(fg_point_feats, is_training, bn_decay, end_points)
+    batch_size = fg_point_feats.get_shape()[0].value
+    proposals_reshaped = tf.reshape(proposals, [batch_size, NUM_FG_POINT, -1])
     # Parse output to 3D box parameters
-    end_points = parse_output_to_tensors(proposals, end_points)
+    end_points = parse_output_to_tensors(proposals_reshaped, end_points)
     return end_points
 
 if __name__=='__main__':

@@ -5,7 +5,7 @@ import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(BASE_DIR, 'utils'))
-from parameterize import NUM_CENTER_BIN, NUM_HEADING_BIN, type_mean_size
+from parameterize import NUM_CENTER_BIN, NUM_HEADING_BIN, NUM_SIZE_CLUSTER, type_mean_size
 import tf_util
 from tensorflow.python.ops import array_ops
 
@@ -159,7 +159,7 @@ def parse_output_to_tensors(output, end_points):
         [-1,-1,NUM_CENTER_BIN])
     end_points['center_x_scores'] = center_x_scores # (B,N,NUM_CENTER_BIN)
     end_points['center_x_residuals_normalized'] = \
-        bin_x_residuals_normalized # (B,N,NUM_CENTER_BIN)
+        center_x_residuals_normalized # (B,N,NUM_CENTER_BIN)
     center_z_scores = tf.slice(output, [0,0,2+NUM_CENTER_BIN*2], [-1,-1,NUM_CENTER_BIN])
     center_z_residuals_normalized = tf.slice(output, [0,0,2+NUM_CENTER_BIN*3],
         [-1,-1,NUM_CENTER_BIN])
@@ -256,8 +256,9 @@ def point_cloud_masking(point_cloud, logits, end_points, xyz_only=True):
             [point_cloud_xyz_stage1, point_cloud_features], axis=-1)
     num_channels = point_cloud_stage1.get_shape()[2].value
 
-    object_point_cloud, _ = tf_gather_object_pc(point_cloud_stage1,
+    object_point_cloud, indices = tf_gather_object_pc(point_cloud_stage1,
         mask, NUM_FG_POINT)
+    end_points['fg_point_indices'] = indices
     object_point_cloud.set_shape([batch_size, NUM_FG_POINT, num_channels])
 
     return object_point_cloud, end_points
@@ -307,27 +308,31 @@ def get_loss(labels, end_points):
     # 3D Segmentation loss
     mask_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
        logits=end_points['foreground_logits'], labels=labels['mask_label']))
-    mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(mask_label, 2, axis=-1))
+    mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(labels['mask_label'], 2, axis=-1))
     props = end_points['proposals']
     # TODO: mask foreground points
+    for k in labels:
+        if k in ['mask_label']:
+            continue
+        labels[k] = tf.gather_nd(labels[k], end_points['fg_point_indices'])
     # Center loss
     objectness_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
        logits=end_points['objectness'], labels=labels['objectness']))
     center_x_cls_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
-       logits=end_points['center_x_sc   ores'], labels=labels['center_bin_x']))
+       logits=end_points['center_x_scores'], labels=labels['center_bin_x']))
     center_z_cls_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
        logits=end_points['center_z_scores'], labels=labels['center_bin_z']))
     bin_x_onehot = tf.one_hot(labels['center_bin_x'],
         depth=NUM_CENTER_BIN,
         on_value=1, off_value=0, axis=-1) # BxNxNUM_CENTER_BIN
     # NOTICE: labels['center_x_residuals'] is already normalized
-    center_x_residuals_normalized = tf.reduce_sum(end_points['center_x_residuals_normalized']*bin_x_onehot, axis=2) # BxN
+    center_x_residuals_normalized = tf.reduce_sum(end_points['center_x_residuals_normalized']*tf.to_float(bin_x_onehot), axis=2) # BxN
     center_x_residuals_dist = tf.norm(labels['center_x_residuals'] - center_x_residuals_normalized, axis=-1)
     center_x_res_loss = huber_loss(center_x_residuals_dist, delta=1.0)
     bin_z_onehot = tf.one_hot(labels['center_bin_z'],
         depth=NUM_CENTER_BIN,
         on_value=1, off_value=0, axis=-1) # BxNxNUM_CENTER_BIN
-    center_z_residuals_normalized = tf.reduce_sum(end_points['center_z_residuals_normalized']*bin_z_onehot, axis=2) # BxN
+    center_z_residuals_normalized = tf.reduce_sum(end_points['center_z_residuals_normalized']*tf.to_float(bin_z_onehot), axis=2) # BxN
     center_z_residuals_dist = tf.norm(labels['center_z_residuals'] - center_x_residuals_normalized, axis=-1)
     center_z_res_loss = huber_loss(center_z_residuals_dist, delta=1.0)
     # y is directly regressed

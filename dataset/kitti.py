@@ -114,7 +114,7 @@ class Dataset(object):
         for i in range(bsize):
             frame = self.data_buffer.get()
             objectness, center_cls, center_res, angle_cls, angle_res, size_cls, size_res = \
-                get_proposal_out(frame)
+                self.get_proposal_out(frame)
             batch_data[i,...] = frame['pointcloud']
             batch_label[i,:] = frame['mask_label']
             batch_objectness[i,...] = objectness
