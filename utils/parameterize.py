@@ -64,11 +64,8 @@ def class2size(pred_cls, residual):
     mean_size = type_mean_size[pred_cls]
     return mean_size + residual
 
-def obj_to_proposal_vec(obj, point):
-    '''convert box3d related to a point to proposal vector'''
-    # use point as origin
-    obj_center = obj.t
-    center = obj.t - point
+def center2class(obj_center, point):
+    center = obj_center - point
     bin_x = int((obj_center[0] - point[0] + CENTER_SEARCH_RANGE) / CENTER_BIN_SIZE)
     bin_z = int((obj_center[2] - point[2] + CENTER_SEARCH_RANGE) / CENTER_BIN_SIZE)
     center_cls = np.array([bin_x, bin_z])
@@ -77,14 +74,23 @@ def obj_to_proposal_vec(obj, point):
         obj_center[1] - point[1],
         1/CENTER_BIN_SIZE * (obj_center[2] - point[2] + CENTER_SEARCH_RANGE - (bin_z+0.5)*CENTER_BIN_SIZE),
     ])
+    return center_cls, center_res
+
+def class2center(center_cls, center_res, point):
     # recover true center from center_cls and center_res
-    # bin_center = np.array([
-    #     bin_x * CENTER_BIN_SIZE + CENTER_BIN_SIZE/2 - CENTER_SEARCH_RANGE + point[0],
-    #     point[1],
-    #     bin_z * CENTER_BIN_SIZE + CENTER_BIN_SIZE/2 - CENTER_SEARCH_RANGE + point[2]
-    # ])
-    # center_recover = bin_center + np.array([center_res[0]*CENTER_BIN_SIZE, center_res[1], center_res[2]*CENTER_BIN_SIZE])
-    # print(obj_center, center_recover)
+    bin_center = np.array([
+        center_cls[0] * CENTER_BIN_SIZE + CENTER_BIN_SIZE/2 - CENTER_SEARCH_RANGE + point[0],
+        point[1],
+        center_cls[1] * CENTER_BIN_SIZE + CENTER_BIN_SIZE/2 - CENTER_SEARCH_RANGE + point[2]
+    ])
+    obj_center = bin_center + np.array([center_res[0]*CENTER_BIN_SIZE, center_res[1], center_res[2]*CENTER_BIN_SIZE])
+    return obj_center
+
+def obj_to_proposal_vec(obj, point):
+    '''convert box3d related to a point to proposal vector'''
+    # use point as origin
+    obj_center = obj.t
+    center_cls, center_res = center2class(obj_center, point)
     ## encode heading
     angle_cls, angle_res = angle2class(obj.ry, NUM_HEADING_BIN)
     # print(angle_cls, angle_res)
@@ -100,5 +106,9 @@ if __name__ == '__main__':
     obj.l = 1
     obj.w = 0.6
     obj.h = 0.7
-    center_cls, center_res, angle_cls,angle_res, size_cls, size_res = obj_to_proposal_vec(obj, np.array([-27.1,1.3,4.3]))
+    point = np.array([-27.1,1.3,4.3])
+    center_cls, center_res, angle_cls,angle_res, size_cls, size_res = obj_to_proposal_vec(obj, point)
     print(center_cls, center_res, angle_cls,angle_res, size_cls, size_res)
+    print(class2center(center_cls, center_res, point))
+    print(class2size(size_cls, size_res))
+    print(class2angle(angle_cls,angle_res, NUM_HEADING_BIN))
