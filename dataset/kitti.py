@@ -82,7 +82,7 @@ class Dataset(object):
         angle_cls = np.zeros((self.npoints,), dtype=np.int32)
         size_cls = np.zeros((self.npoints,), dtype=np.int32)
         center_res = np.zeros((self.npoints, 3))
-        angle_res = np.zeros((self.npoints, 1))
+        angle_res = np.zeros((self.npoints,))
         size_res = np.zeros((self.npoints, 3))
         for i, prop in frame_data['proposal_of_point'].items():
             objectness[i] = 1
@@ -109,7 +109,7 @@ class Dataset(object):
         batch_center_z_res = np.zeros((bsize, self.npoints))
         batch_angle_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
         batch_size_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
-        batch_angle_res = np.zeros((bsize, self.npoints, 1))
+        batch_angle_res = np.zeros((bsize, self.npoints))
         batch_size_res = np.zeros((bsize, self.npoints, 3))
         for i in range(bsize):
             frame = self.data_buffer.get()

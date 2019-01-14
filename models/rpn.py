@@ -89,10 +89,11 @@ def get_region_proposal_net(point_feats, is_training, bn_decay, end_points):
     end_points['proposals'] = output
     return output
 
-def get_model(point_cloud, is_training, bn_decay, end_points):
+def get_model(point_cloud, mask_label, is_training, bn_decay, end_points):
     end_points = get_segmentation_net(point_cloud, is_training, bn_decay, end_points)
+    foreground_logits = tf.cond(is_training, lambda: tf.one_hot(mask_label, 2), lambda: end_points['foreground_logits'])
     fg_point_feats, end_points = point_cloud_masking(
-        end_points['point_feats'], end_points['foreground_logits'],
+        end_points['point_feats'], foreground_logits,
         end_points, xyz_only=False) # BxNUM_FG_POINTxD
     proposals = get_region_proposal_net(fg_point_feats, is_training, bn_decay, end_points)
     batch_size = fg_point_feats.get_shape()[0].value

@@ -15,6 +15,8 @@ sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 from kitti import Dataset
+import train_util
+from model_util import NUM_FG_POINT
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
@@ -127,9 +129,24 @@ def train():
                 'size_class': size_class_pl,
                 'size_residuals': size_residuals_pl
             }
-            end_points = MODEL.get_model(pointclouds_pl,
+            end_points = MODEL.get_model(pointclouds_pl, mask_labels_pl,
                 is_training_pl, bn_decay, end_points)
             loss = MODEL.get_loss(labels_pl, end_points)
+
+            iou2ds, iou3ds = tf.py_func(train_util.compute_box3d_iou, [
+                end_points['fg_points'], end_points['fg_point_indices'],
+                end_points['heading_scores'], end_points['heading_residuals_normalized'],
+                end_points['size_scores'], end_points['size_residuals_normalized'],
+                end_points['center_x_scores'], end_points['center_z_scores'],
+                end_points['center_x_residuals_normalized'], end_points['center_y_residuals'],
+                end_points['center_z_residuals_normalized'],
+                labels_pl['heading_bin'], labels_pl['heading_residuals'], labels_pl['size_class'], labels_pl['size_residuals'],
+                labels_pl['center_bin_x'], labels_pl['center_bin_z'],
+                labels_pl['center_x_residuals'], labels_pl['center_y_residuals'], labels_pl['center_z_residuals']
+                ],
+                [tf.float32, tf.float32])
+            end_points['iou2ds'] = iou2ds
+            end_points['iou3ds'] = iou3ds
 
             # Get training operator
             learning_rate = get_learning_rate(batch)
@@ -173,6 +190,7 @@ def train():
             'loss': loss,
             'train_op': train_op,
             'step': batch,
+            'merged': merged,
             'end_points': end_points}
         ops.update(labels_pl)
 
@@ -207,6 +225,8 @@ def train_one_epoch(sess, ops, train_writer):
     total_fp = 0
     total_fn = 0
     loss_sum = 0
+    iou2ds_sum = 0
+    iou3ds_sum = 0
 
     # Training with batches
     # for batch_idx in range(num_batches):
@@ -233,7 +253,12 @@ def train_one_epoch(sess, ops, train_writer):
             ops['size_residuals']: batch_size_residuals,
             ops['is_training_pl']: is_training,
         }
-        loss_val, _, logits_val = sess.run([ops['loss'], ops['train_op'], ops['end_points']['foreground_logits']], feed_dict=feed_dict)
+        summary, step, loss_val, _, logits_val, iou2ds, iou3ds = sess.run([
+            ops['merged'], ops['step'], ops['loss'], ops['train_op'],
+            ops['end_points']['foreground_logits'],
+            ops['end_points']['iou2ds'], ops['end_points']['iou3ds']], feed_dict=feed_dict)
+
+        train_writer.add_summary(summary, step)
 
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
@@ -247,6 +272,8 @@ def train_one_epoch(sess, ops, train_writer):
         total_fn += fn
         total_seen += NUM_POINT * BATCH_SIZE
         loss_sum += loss_val
+        iou2ds_sum += np.sum(iou2ds)
+        iou3ds_sum += np.sum(iou3ds)
 
         if (batch_idx+1)%10 == 0:
             log_string(' -- %03d --' % (batch_idx+1))
@@ -259,12 +286,16 @@ def train_one_epoch(sess, ops, train_writer):
                     (float(total_tp)/(total_tp+total_fn)))
                 log_string('segmentation precision: %f'% \
                     (float(total_tp)/(total_tp+total_fp)))
+                log_string('box IoU (ground/3D): %f / %f' % \
+                    (iou2ds_sum / float(NUM_FG_POINT*10), iou3ds_sum / float(NUM_FG_POINT*10)))
             total_correct = 0
             total_seen = 0
             total_tp = 0
             total_fp = 0
             total_fn = 0
             loss_sum = 0
+            iou2ds_sum = 0
+            iou3ds_sum = 0
         if is_last_batch:
             break
         batch_idx += 1
@@ -284,6 +315,8 @@ def eval_one_epoch(sess, ops, test_writer):
     total_fn = 0
     loss_sum = 0
     num_batches = 0
+    iou2ds_sum = 0
+    iou3ds_sum = 0
 
     while(True):
         batch_pc, batch_mask_label, batch_objectness, \
@@ -308,7 +341,10 @@ def eval_one_epoch(sess, ops, test_writer):
             ops['is_training_pl']: is_training,
         }
 
-        loss_val, logits_val = sess.run([ops['loss'], ops['end_points']['foreground_logits']], feed_dict=feed_dict)
+        summary, step, loss_val, logits_val, iou2ds, iou3ds = sess.run([ops['merged'], ops['step'], ops['loss'],
+            ops['end_points']['foreground_logits'],
+            ops['end_points']['iou2ds'], ops['end_points']['iou3ds']], feed_dict=feed_dict)
+        test_writer.add_summary(summary, step)
 
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
@@ -323,6 +359,8 @@ def eval_one_epoch(sess, ops, test_writer):
         total_seen += NUM_POINT * BATCH_SIZE
         loss_sum += loss_val
         num_batches += BATCH_SIZE
+        iou2ds_sum += np.sum(iou2ds)
+        iou3ds_sum += np.sum(iou3ds)
         if is_last_batch:
             break
 
@@ -333,6 +371,8 @@ def eval_one_epoch(sess, ops, test_writer):
         (float(total_tp)/(total_tp+total_fn)))
     log_string('eval segmentation precision: %f'% \
         (float(total_tp)/(total_tp+total_fp)))
+    log_string('eval box IoU (ground/3D): %f / %f' % \
+        (iou2ds_sum / float(NUM_FG_POINT*num_batches), iou3ds_sum / float(NUM_FG_POINT*num_batches)))
     EPOCH_CNT += 1
     return loss_sum / float(num_batches)
 
