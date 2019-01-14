@@ -1,8 +1,8 @@
 import numpy as np
 import math
 
-CENTER_SEARCH_RANGE = 3.9 # in meters
-NUM_CENTER_BIN = 6 # must be odd
+CENTER_SEARCH_RANGE = 3.0 # in meters
+NUM_CENTER_BIN = 12
 CENTER_BIN_SIZE = CENTER_SEARCH_RANGE * 2 / NUM_CENTER_BIN # in one direction
 NUM_HEADING_BIN = 12
 

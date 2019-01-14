@@ -117,7 +117,6 @@ class Dataset(object):
                 self.get_proposal_out(frame)
             batch_data[i,...] = frame['pointcloud']
             batch_label[i,:] = frame['mask_label']
-            batch_objectness[i,...] = objectness
             batch_center_x_cls[i,...] = center_cls[:,0]
             batch_center_z_cls[i,...] = center_cls[:,1]
             batch_center_x_res[i,...] = center_res[:,0]
@@ -133,7 +132,7 @@ class Dataset(object):
             self.batch_idx = 0
         else:
             self.batch_idx += 1
-        return batch_data, batch_label, batch_objectness, batch_center_x_cls,\
+        return batch_data, batch_label, batch_center_x_cls,\
             batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
             batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
             batch_size_res, is_last_batch
@@ -174,7 +173,7 @@ class Dataset(object):
 if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
-    dataset = Dataset(20000, kitti_path, split)
+    dataset = Dataset(16384, kitti_path, split)
     dataset.preprocess(split)
 
     '''

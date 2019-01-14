@@ -145,7 +145,7 @@ def focal_loss(prediction_tensor, target_tensor, weights=None, alpha=0.25, gamma
 def parse_output_to_tensors(output, end_points):
     ''' Parse batch output to separate tensors (added to end_points)
     Input:
-        output: TF tensor in shape (B,N,2+NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4)
+        output: TF tensor in shape (B,N,NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4)
         end_points: dict
     Output:
         end_points: dict (updated)
@@ -153,33 +153,33 @@ def parse_output_to_tensors(output, end_points):
     batch_size = output.get_shape()[0].value
     npoints = output.get_shape()[1].value
     # objectness and center
-    end_points['objectness'] = tf.slice(output, [0,0,0], [-1,-1,2])
-    center_x_scores = tf.slice(output, [0,0,2], [-1,-1,NUM_CENTER_BIN])
-    center_x_residuals_normalized = tf.slice(output, [0,0,2+NUM_CENTER_BIN],
+    #end_points['objectness'] = tf.slice(output, [0,0,0], [-1,-1,2])
+    center_x_scores = tf.slice(output, [0,0,0], [-1,-1,NUM_CENTER_BIN])
+    center_x_residuals_normalized = tf.slice(output, [0,0,NUM_CENTER_BIN],
         [-1,-1,NUM_CENTER_BIN])
     end_points['center_x_scores'] = center_x_scores # (B,N,NUM_CENTER_BIN)
     end_points['center_x_residuals_normalized'] = \
         center_x_residuals_normalized # (B,N,NUM_CENTER_BIN)
-    center_z_scores = tf.slice(output, [0,0,2+NUM_CENTER_BIN*2], [-1,-1,NUM_CENTER_BIN])
-    center_z_residuals_normalized = tf.slice(output, [0,0,2+NUM_CENTER_BIN*3],
+    center_z_scores = tf.slice(output, [0,0,NUM_CENTER_BIN*2], [-1,-1,NUM_CENTER_BIN])
+    center_z_residuals_normalized = tf.slice(output, [0,0,NUM_CENTER_BIN*3],
         [-1,-1,NUM_CENTER_BIN])
     end_points['center_z_scores'] = center_z_scores # (B,N,NUM_CENTER_BIN)
     end_points['center_z_residuals_normalized'] = \
         center_z_residuals_normalized # (B,N,NUM_CENTER_BIN)
-    end_points['center_y_residuals'] = tf.slice(output, [0,0,2+NUM_CENTER_BIN*4], [-1,-1,1])
+    end_points['center_y_residuals'] = tf.slice(output, [0,0,NUM_CENTER_BIN*4], [-1,-1,1])
     # heading
-    heading_scores = tf.slice(output, [0,0,2+NUM_CENTER_BIN*4+1], [-1,-1,NUM_HEADING_BIN])
-    heading_residuals_normalized = tf.slice(output, [0,0,2+NUM_CENTER_BIN*4+1+NUM_HEADING_BIN],
+    heading_scores = tf.slice(output, [0,0,NUM_CENTER_BIN*4+1], [-1,-1,NUM_HEADING_BIN])
+    heading_residuals_normalized = tf.slice(output, [0,0,NUM_CENTER_BIN*4+1+NUM_HEADING_BIN],
         [-1,-1,NUM_HEADING_BIN])
     end_points['heading_scores'] = heading_scores # (B,N,NUM_HEADING_BIN)
     end_points['heading_residuals_normalized'] = heading_residuals_normalized # (B,N,NUM_HEADING_BIN)
     # end_points['heading_residuals'] = \
     #     heading_residuals_normalized * (np.pi/NUM_HEADING_BIN) # BxNUM_HEADING_BIN
     # size
-    size_scores = tf.slice(output, [0,0,2+NUM_CENTER_BIN*4+1+NUM_HEADING_BIN*2],
+    size_scores = tf.slice(output, [0,0,NUM_CENTER_BIN*4+1+NUM_HEADING_BIN*2],
         [-1,-1,NUM_SIZE_CLUSTER]) # BxNUM_SIZE_CLUSTER
     size_residuals_normalized = tf.slice(output,
-        [0,0,2+NUM_CENTER_BIN*4+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER], [-1,-1,NUM_SIZE_CLUSTER*3])
+        [0,0,NUM_CENTER_BIN*4+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER], [-1,-1,NUM_SIZE_CLUSTER*3])
     size_residuals_normalized = tf.reshape(size_residuals_normalized,
         [batch_size, npoints, NUM_SIZE_CLUSTER, 3])
     end_points['size_scores'] = size_scores
@@ -203,7 +203,6 @@ def placeholder_inputs(batch_size, num_point):
     pointclouds_pl = tf.placeholder(tf.float32,
         shape=(batch_size, num_point, NUM_CHANNEL))
     seg_labels_pl = tf.placeholder(tf.int32, shape=(batch_size, num_point))
-    objectness_labels = tf.placeholder(tf.int32, shape=(batch_size, num_point))
     center_bin_x_labels = tf.placeholder(tf.int32, shape=(batch_size, num_point))
     center_bin_z_labels = tf.placeholder(tf.int32, shape=(batch_size, num_point))
     center_x_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point))
@@ -213,7 +212,7 @@ def placeholder_inputs(batch_size, num_point):
     heading_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point))
     size_class_labels = tf.placeholder(tf.int32, shape=(batch_size, num_point))
     size_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point, 3))
-    return pointclouds_pl, seg_labels_pl, objectness_labels, center_bin_x_labels, center_bin_z_labels,\
+    return pointclouds_pl, seg_labels_pl, center_bin_x_labels, center_bin_z_labels,\
         center_x_residuals_labels, center_z_residuals_labels, center_y_residuals_labels, heading_bin_labels,\
         heading_residuals_labels, size_class_labels, size_residuals_labels
 
@@ -323,9 +322,9 @@ def get_loss(labels, end_points):
         else:
             labels_fg[k].set_shape([batch_size, NUM_FG_POINT])
     # Center loss
-    objectness_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
-       logits=end_points['objectness'], labels=labels_fg['objectness']))
-    tf.summary.scalar('objectness loss', objectness_loss)
+    #objectness_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
+    #   logits=end_points['objectness'], labels=labels_fg['objectness']))
+    #tf.summary.scalar('objectness loss', objectness_loss)
     center_x_cls_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
        logits=end_points['center_x_scores'], labels=labels_fg['center_bin_x']))
     center_z_cls_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
@@ -394,7 +393,7 @@ def get_loss(labels, end_points):
     cls_weight = 10
     res_weight = 1
     total_loss = seg_weight * mask_loss + \
-        cls_weight * (objectness_loss + center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
+        cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
         res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + 20*heading_res_loss + 10*size_res_loss)
 
     return mask_loss

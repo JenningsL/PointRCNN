@@ -33,27 +33,41 @@ def get_segmentation_net(point_cloud, is_training, bn_decay, end_points):
 
     # Set abstraction layers
     l1_xyz, l1_points = pointnet_sa_module_msg(l0_xyz, l0_points,
-        128, [0.2,0.4,0.8], [32,64,128],
-        [[32,32,64], [64,64,128], [64,96,128]],
+        4096, [0.2,0.4,0.8], [32,64,128],
+        #[[32,32,64], [64,64,128], [64,96,128]],
+        [[32,64], [64,128], [96,128]],
         is_training, bn_decay, scope='layer1')
     l2_xyz, l2_points = pointnet_sa_module_msg(l1_xyz, l1_points,
-        32, [0.4,0.8,1.6], [64,64,128],
-        [[64,64,128], [128,128,256], [128,128,256]],
+        1024, [0.4,0.8], [64,128],
+        #[[64,64,128], [128,128,256], [128,128,256]],
+        [[64,128], [96,128]],
         is_training, bn_decay, scope='layer2')
-    l3_xyz, l3_points, _ = pointnet_sa_module(l2_xyz, l2_points,
+    l3_xyz, l3_points = pointnet_sa_module_msg(l2_xyz, l2_points,
+        256, [0.8,1.6], [64,128],
+        #[[64,64,128], [128,128,256], [128,128,256]],
+        [[64,128], [96,128]],
+        is_training, bn_decay, scope='layer3')
+    l4_xyz, l4_points = pointnet_sa_module_msg(l3_xyz, l3_points,
+        64, [0.8,1.6,3.2], [128,128,256],
+        [[64,64,128], [128,128,256], [128,128,256]],
+        is_training, bn_decay, scope='layer4')
+    l5_xyz, l5_points, _ = pointnet_sa_module(l4_xyz, l4_points,
         npoint=None, radius=None, nsample=None, mlp=[128,256,1024],
         mlp2=None, group_all=True, is_training=is_training,
-        bn_decay=bn_decay, scope='layer3')
+        bn_decay=bn_decay, scope='layer5')
 
     # Feature Propagation layers
-
-    l2_points = pointnet_fp_module(l2_xyz, l3_xyz, l2_points, l3_points,
+    l4_points = pointnet_fp_module(l4_xyz, l5_xyz, l4_points, l5_points,
         [128,128], is_training, bn_decay, scope='fa_layer1')
-    l1_points = pointnet_fp_module(l1_xyz, l2_xyz, l1_points, l2_points,
+    l3_points = pointnet_fp_module(l3_xyz, l4_xyz, l3_points, l4_points,
         [128,128], is_training, bn_decay, scope='fa_layer2')
+    l2_points = pointnet_fp_module(l2_xyz, l3_xyz, l2_points, l3_points,
+        [128,128], is_training, bn_decay, scope='fa_layer3')
+    l1_points = pointnet_fp_module(l1_xyz, l2_xyz, l1_points, l2_points,
+        [128,128], is_training, bn_decay, scope='fa_layer4')
     l0_points = pointnet_fp_module(l0_xyz, l1_xyz,
         tf.concat([l0_xyz,l0_points],axis=-1), l1_points,
-        [128,128], is_training, bn_decay, scope='fa_layer3')
+        [128,128], is_training, bn_decay, scope='fa_layer5')
 
     # FC layers
     net = tf_util.conv1d(l0_points, 128, 1, padding='VALID', bn=True,
@@ -78,13 +92,12 @@ def get_region_proposal_net(point_feats, is_training, bn_decay, end_points):
     net = tf_util.fully_connected(net, 256, bn=True,
         is_training=is_training, scope='rp-fc2', bn_decay=bn_decay)
 
-    # The first 2 numbers: box objectness logits,
-    # the next NUM_CENTER_BIN*2*2: CENTER_BIN class scores and bin residuals for (x,z)
+    # The first NUM_CENTER_BIN*2*2: CENTER_BIN class scores and bin residuals for (x,z)
     # next 1: center residual for y
     # next NUM_HEADING_BIN*2: heading bin class scores and residuals
     # next NUM_SIZE_CLUSTER*4: size cluster class scores and residuals(l,w,h)
     output = tf_util.fully_connected(net,
-        2+NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4,
+        NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4,
         activation_fn=None, scope='rp-fc3')
     end_points['proposals'] = output
     return output

@@ -22,10 +22,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
 parser.add_argument('--model', default='frustum_pointnets_v1', help='Model name [default: frustum_pointnets_v1]')
 parser.add_argument('--log_dir', default='log', help='Log dir [default: log]')
-parser.add_argument('--num_point', type=int, default=2048, help='Point Number [default: 2048]')
+parser.add_argument('--num_point', type=int, default=16384, help='Point Number [default: 16384]')
 parser.add_argument('--max_epoch', type=int, default=201, help='Epoch to run [default: 201]')
-parser.add_argument('--batch_size', type=int, default=32, help='Batch Size during training [default: 32]')
-parser.add_argument('--learning_rate', type=float, default=0.001, help='Initial learning rate [default: 0.001]')
+parser.add_argument('--batch_size', type=int, default=16, help='Batch Size during training [default: 16]')
+parser.add_argument('--learning_rate', type=float, default=0.002, help='Initial learning rate [default: 0.002]')
 parser.add_argument('--momentum', type=float, default=0.9, help='Initial learning rate [default: 0.9]')
 parser.add_argument('--optimizer', default='adam', help='adam or momentum [default: adam]')
 parser.add_argument('--decay_step', type=int, default=200000, help='Decay step for lr decay [default: 200000]')
@@ -98,7 +98,7 @@ def train():
 
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            pointclouds_pl, mask_labels_pl, objectness_pl, \
+            pointclouds_pl, mask_labels_pl, \
             center_bin_x_pl, center_bin_z_pl,\
             center_x_residuals_pl, center_z_residuals_pl, center_y_residuals_pl, heading_bin_pl,\
             heading_residuals_pl, size_class_pl, size_residuals_pl \
@@ -118,7 +118,6 @@ def train():
             end_points = {}
             labels_pl = {
                 'mask_label': mask_labels_pl,
-                'objectness': objectness_pl,
                 'center_bin_x': center_bin_x_pl,
                 'center_bin_z': center_bin_z_pl,
                 'center_x_residuals': center_x_residuals_pl,
@@ -232,7 +231,7 @@ def train_one_epoch(sess, ops, train_writer):
     # for batch_idx in range(num_batches):
     batch_idx = 0
     while(True):
-        batch_pc, batch_mask_label, batch_objectness, \
+        batch_pc, batch_mask_label, \
         batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
         batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
         batch_heading_residuals, batch_size_class, batch_size_residuals, \
@@ -241,7 +240,6 @@ def train_one_epoch(sess, ops, train_writer):
         feed_dict = {
             ops['pointclouds_pl']: batch_pc,
             ops['mask_label']: batch_mask_label,
-            ops['objectness']: batch_objectness,
             ops['center_bin_x']: batch_center_bin_x,
             ops['center_bin_z']: batch_center_bin_z,
             ops['center_x_residuals']: batch_center_x_residuals,
@@ -319,7 +317,7 @@ def eval_one_epoch(sess, ops, test_writer):
     iou3ds_sum = 0
 
     while(True):
-        batch_pc, batch_mask_label, batch_objectness, \
+        batch_pc, batch_mask_label, \
         batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
         batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
         batch_heading_residuals, batch_size_class, batch_size_residuals, \
@@ -328,7 +326,6 @@ def eval_one_epoch(sess, ops, test_writer):
         feed_dict = {
             ops['pointclouds_pl']: batch_pc,
             ops['mask_label']: batch_mask_label,
-            ops['objectness']: batch_objectness,
             ops['center_bin_x']: batch_center_bin_x,
             ops['center_bin_z']: batch_center_bin_z,
             ops['center_x_residuals']: batch_center_x_residuals,
