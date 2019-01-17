@@ -3,9 +3,12 @@ import tensorflow as tf
 import os
 import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
-sys.path.append(os.path.join(BASE_DIR, 'utils'))
+sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 from parameterize import NUM_CENTER_BIN, NUM_HEADING_BIN, NUM_SIZE_CLUSTER, type_mean_size
+from parameterize import class2angle, class2size, class2center, NUM_HEADING_BIN
+from box_util import get_3d_box
 import tf_util
 from tensorflow.python.ops import array_ops
 
@@ -14,7 +17,6 @@ from tensorflow.python.ops import array_ops
 # -----------------
 NUM_FG_POINT = 1024
 NUM_CHANNEL = 4
-type_whitelist = ['Car', 'Pedestrian', 'Cyclist', 'NonObject']
 
 # -----------------
 # TF Functions Helpers
@@ -104,6 +106,32 @@ def get_box3d_corners(center, heading_residuals, size_residuals):
 
     return tf.reshape(corners_3d, [batch_size, NUM_HEADING_BIN, NUM_SIZE_CLUSTER, 8, 3])
 
+def get_3d_box_from_output(points, heading_logits, heading_residuals, size_logits, size_residuals, \
+        center_x_logits, center_z_logits, center_x_residuals, center_y_residuals, center_z_residuals):
+    batch_size = points.shape[0]
+    fg_points = points.shape[1]
+    heading_class = np.argmax(heading_logits, 2) # B,M
+    size_class = np.argmax(size_logits, 2) # B,M
+    center_x_cls = np.argmax(center_x_logits, 2)
+    center_z_cls = np.argmax(center_z_logits, 2)
+    center_cls = np.stack([center_x_cls, center_z_cls], axis=-1)
+    batch_corners_3d_list = []
+    for i in range(batch_size):
+        corners_3d_list = []
+        for j in range(fg_points):
+            heading_angle = class2angle(heading_class[i,j],
+                heading_residuals[i,j, heading_class[i,j]], NUM_HEADING_BIN)
+            box_size = class2size(size_class[i,j], size_residuals[i,j,size_class[i,j]])
+            center_res = np.array([
+                center_x_residuals[i,j,center_x_cls[i,j]],
+                center_y_residuals[i,j],
+                center_z_residuals[i,j,center_z_cls[i,j]]
+            ])
+            center_pred = class2center(center_cls[i,j], center_res, points[i,j])
+            corners_3d = get_3d_box(box_size, heading_angle, center_pred)
+            corners_3d_list.append(corners_3d)
+        batch_corners_3d_list.append(corners_3d_list)
+    return np.array(batch_corners_3d_list, dtype=np.float32)
 
 def huber_loss(error, delta):
     abs_error = tf.abs(error)
@@ -186,6 +214,13 @@ def parse_output_to_tensors(output, end_points):
     end_points['size_residuals_normalized'] = size_residuals_normalized
     # end_points['size_residuals'] = size_residuals_normalized * \
     #     tf.expand_dims(tf.constant(type_mean_size, dtype=tf.float32), 0)
+    end_points['proposal_boxes'] = tf.py_func(get_3d_box_from_output, [
+        end_points['fg_points_xyz'], end_points['heading_scores'], end_points['heading_residuals_normalized'],
+        end_points['size_scores'], end_points['size_residuals_normalized'], end_points['center_x_scores'],
+        end_points['center_z_scores'], end_points['center_x_residuals_normalized'],
+        end_points['center_y_residuals'], end_points['center_z_residuals_normalized']
+        ], tf.float32)
+    end_points['proposal_boxes'].set_shape([batch_size, npoints, 8, 3])
     return end_points
 
 # --------------------------------------
@@ -257,9 +292,10 @@ def point_cloud_masking(point_cloud, logits, end_points, xyz_only=True):
 
     object_point_cloud, indices = tf_gather_object_pc(point_cloud_stage1,
         mask, NUM_FG_POINT)
+    object_point_cloud.set_shape([batch_size, NUM_FG_POINT, num_channels])
     end_points['fg_point_indices'] = indices
     end_points['fg_points'] = object_point_cloud
-    object_point_cloud.set_shape([batch_size, NUM_FG_POINT, num_channels])
+    end_points['fg_points_xyz'] = tf.slice(object_point_cloud, [0,0,0], [-1,-1,3])
 
     return object_point_cloud, end_points
 
@@ -389,11 +425,15 @@ def get_loss(labels, end_points):
     tf.summary.scalar('size class loss', size_class_loss)
     tf.summary.scalar('size residual loss', size_res_loss)
 
-    seg_weight = 0.01
+    seg_weight = 0.1
     cls_weight = 10
     res_weight = 1
     total_loss = seg_weight * mask_loss + \
         cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
         res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + 20*heading_res_loss + 10*size_res_loss)
+    '''
+    total_loss = cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
+        res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + 20*heading_res_loss + 10*size_res_loss)
+    '''
 
-    return mask_loss
+    return total_loss

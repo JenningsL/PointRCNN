@@ -33,46 +33,46 @@ def get_segmentation_net(point_cloud, is_training, bn_decay, end_points):
 
     # Set abstraction layers
     l1_xyz, l1_points = pointnet_sa_module_msg(l0_xyz, l0_points,
-        4096, [0.2,0.4,0.8], [32,64,128],
-        #[[32,32,64], [64,64,128], [64,96,128]],
-        [[32,64], [64,128], [96,128]],
+        4096, [0.1,0.5], [16,32],
+        [[16,16,32], [32,32,64]],
         is_training, bn_decay, scope='layer1')
     l2_xyz, l2_points = pointnet_sa_module_msg(l1_xyz, l1_points,
-        1024, [0.4,0.8], [64,128],
-        #[[64,64,128], [128,128,256], [128,128,256]],
-        [[64,128], [96,128]],
+        1024, [0.5,1.0], [16,32],
+        [[64,64,128], [64,96,128]],
         is_training, bn_decay, scope='layer2')
     l3_xyz, l3_points = pointnet_sa_module_msg(l2_xyz, l2_points,
-        256, [0.8,1.6], [64,128],
-        #[[64,64,128], [128,128,256], [128,128,256]],
-        [[64,128], [96,128]],
+        256, [1.0,2.0], [16,32],
+        [[128, 196, 256], [128,196, 256]],
         is_training, bn_decay, scope='layer3')
     l4_xyz, l4_points = pointnet_sa_module_msg(l3_xyz, l3_points,
-        64, [0.8,1.6,3.2], [128,128,256],
-        [[64,64,128], [128,128,256], [128,128,256]],
+        64, [2.0,4.0], [16,32],
+        [[256, 256, 512], [256,384, 512]],
         is_training, bn_decay, scope='layer4')
+    '''
     l5_xyz, l5_points, _ = pointnet_sa_module(l4_xyz, l4_points,
         npoint=None, radius=None, nsample=None, mlp=[128,256,1024],
         mlp2=None, group_all=True, is_training=is_training,
         bn_decay=bn_decay, scope='layer5')
+    '''
 
     # Feature Propagation layers
+    '''
     l4_points = pointnet_fp_module(l4_xyz, l5_xyz, l4_points, l5_points,
         [128,128], is_training, bn_decay, scope='fa_layer1')
+    '''
     l3_points = pointnet_fp_module(l3_xyz, l4_xyz, l3_points, l4_points,
-        [128,128], is_training, bn_decay, scope='fa_layer2')
+        [512,512], is_training, bn_decay, scope='fa_layer2')
     l2_points = pointnet_fp_module(l2_xyz, l3_xyz, l2_points, l3_points,
-        [128,128], is_training, bn_decay, scope='fa_layer3')
+        [512,512], is_training, bn_decay, scope='fa_layer3')
     l1_points = pointnet_fp_module(l1_xyz, l2_xyz, l1_points, l2_points,
-        [128,128], is_training, bn_decay, scope='fa_layer4')
+        [256,256], is_training, bn_decay, scope='fa_layer4')
     l0_points = pointnet_fp_module(l0_xyz, l1_xyz,
         tf.concat([l0_xyz,l0_points],axis=-1), l1_points,
         [128,128], is_training, bn_decay, scope='fa_layer5')
-
+    end_points['point_feats'] = tf.concat([l0_xyz,l0_points], axis=-1) # (B, N, 3+C)
     # FC layers
     net = tf_util.conv1d(l0_points, 128, 1, padding='VALID', bn=True,
         is_training=is_training, scope='conv1d-fc1', bn_decay=bn_decay)
-    end_points['point_feats'] = net
     net = tf_util.dropout(net, keep_prob=0.7,
         is_training=is_training, scope='dp1')
     logits = tf_util.conv1d(net, 2, 1,
@@ -87,9 +87,11 @@ def get_region_proposal_net(point_feats, is_training, bn_decay, end_points):
     point_feats = tf.slice(point_feats, [0,0,3], [-1,-1,-1]) # (B, N, D)
     net = tf.reshape(point_feats, [batch_size * npoints, -1])
     # Fully connected layers
-    net = tf_util.fully_connected(net, 512, bn=True,
-        is_training=is_training, scope='rp-fc1', bn_decay=bn_decay)
     net = tf_util.fully_connected(net, 256, bn=True,
+        is_training=is_training, scope='rp-fc0', bn_decay=bn_decay)
+    net = tf_util.fully_connected(net, 256, bn=True,
+        is_training=is_training, scope='rp-fc1', bn_decay=bn_decay)
+    net = tf_util.fully_connected(net, 512, bn=True,
         is_training=is_training, scope='rp-fc2', bn_decay=bn_decay)
 
     # The first NUM_CENTER_BIN*2*2: CENTER_BIN class scores and bin residuals for (x,z)
@@ -105,6 +107,7 @@ def get_region_proposal_net(point_feats, is_training, bn_decay, end_points):
 def get_model(point_cloud, mask_label, is_training, bn_decay, end_points):
     end_points = get_segmentation_net(point_cloud, is_training, bn_decay, end_points)
     foreground_logits = tf.cond(is_training, lambda: tf.one_hot(mask_label, 2), lambda: end_points['foreground_logits'])
+    # fg_point_feats include xyz
     fg_point_feats, end_points = point_cloud_masking(
         end_points['point_feats'], foreground_logits,
         end_points, xyz_only=False) # BxNUM_FG_POINTxD
@@ -117,8 +120,9 @@ def get_model(point_cloud, mask_label, is_training, bn_decay, end_points):
 
 if __name__=='__main__':
     with tf.Graph().as_default():
-        inputs = tf.zeros((32,1024,4))
-        outputs = get_model(inputs, tf.constant(True), None, {})
+        inputs = tf.zeros((32,16384,4))
+        mask_label = tf.zeros((32,16384), dtype=tf.int32)
+        outputs = get_model(inputs, mask_label, tf.constant(True), None, {})
         for key in outputs:
             print((key, outputs[key]))
         # loss = get_loss(tf.zeros((32,),dtype=tf.int32),

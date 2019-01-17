@@ -10,40 +10,11 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR,'utils'))
 from parameterize import class2angle, class2size, class2center, NUM_HEADING_BIN
-from box_util import box3d_iou
+from box_util import box3d_iou, get_3d_box
 
 # ----------------------------------
 # Helper functions for evaluation
 # ----------------------------------
-
-def get_3d_box(box_size, heading_angle, center):
-    ''' Calculate 3D bounding box corners from its parameterization.
-
-    Input:
-        box_size: tuple of (l,w,h)
-        heading_angle: rad scalar, clockwise from pos x axis
-        center: tuple of (x,y,z)
-    Output:
-        corners_3d: numpy array of shape (8,3) for 3D box cornders
-    '''
-    def roty(t):
-        c = np.cos(t)
-        s = np.sin(t)
-        return np.array([[c,  0,  s],
-                         [0,  1,  0],
-                         [-s, 0,  c]])
-
-    R = roty(heading_angle)
-    l,w,h = box_size
-    x_corners = [l/2,l/2,-l/2,-l/2,l/2,l/2,-l/2,-l/2];
-    y_corners = [h/2,h/2,h/2,h/2,-h/2,-h/2,-h/2,-h/2];
-    z_corners = [w/2,-w/2,-w/2,w/2,w/2,-w/2,-w/2,w/2];
-    corners_3d = np.dot(R, np.vstack([x_corners,y_corners,z_corners]))
-    corners_3d[0,:] = corners_3d[0,:] + center[0];
-    corners_3d[1,:] = corners_3d[1,:] + center[1];
-    corners_3d[2,:] = corners_3d[2,:] + center[2];
-    corners_3d = np.transpose(corners_3d)
-    return corners_3d
 
 def compute_box3d_iou(points, indices, heading_logits, heading_residuals,
         size_logits, size_residuals,center_x_logits,center_z_logits,center_x_residuals,
@@ -120,4 +91,32 @@ def compute_box3d_iou(points, indices, heading_logits, heading_residuals,
             iou2d_list.append(iou_2d)
     return np.array(iou2d_list, dtype=np.float32), \
         np.array(iou3d_list, dtype=np.float32)
+
+def compute_proposal_recall(batch_pred_boxes, batch_gt_boxes, iou_threshold=0.5):
+    '''
+    batch_pred_boxes: (B,FG_POINT_NUM,8,3)
+    batch_gt_boxes: (B,?,8,3)
+    '''
+    total_recall = 0
+    total_labels = 0
+    for pred_boxes, gt_boxes in zip(batch_pred_boxes, batch_gt_boxes):
+        recall = np.zeros((len(gt_boxes),))
+        for i, gt_box in enumerate(gt_boxes):
+            for pred_box in pred_boxes:
+                iou_3d, iou_2d = box3d_iou(pred_box, gt_box)
+                if iou_2d > iou_threshold:
+                    recall[i] = 1
+                    break
+        total_recall += np.sum(recall)
+        total_labels += len(gt_boxes)
+    return float(total_recall) / total_labels
+
+if __name__ == '__main__':
+    gt_boxes = np.array([[
+        [[-0.2665488 ,  1.68      , 21.26691373],[ 1.39309225,  1.68      , 21.23239432],[ 1.3265488 ,  1.68      , 18.03308627],[-0.33309225,  1.68      , 18.06760568],[-0.2665488 ,  0.07      , 21.26691373],[ 1.39309225,  0.07      , 21.23239432],[ 1.3265488 ,  0.07      , 18.03308627],[-0.33309225,  0.07      , 18.06760568]]
+    ]])
+    prop_boxes = np.array([[
+        [[-0.2665488 ,  1.68      , 21.26691373],[ 1.39309225,  1.68      , 21.23239432],[ 1.3265488 ,  1.68      , 18.03308627],[-0.33309225,  1.68      , 18.06760568],[-0.2665488 ,  0.07      , 21.26691373],[ 1.39309225,  0.07      , 21.23239432],[ 1.3265488 ,  0.07      , 18.03308627],[-0.33309225,  0.07      , 18.06760568]]
+    ]])
+    print(compute_proposal_recall(prop_boxes, gt_boxes))
 

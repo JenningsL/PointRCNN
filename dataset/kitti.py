@@ -37,7 +37,7 @@ class Dataset(object):
         self.split = split
         self.kitti_dataset = kitti_object(kitti_path, 'training')
         self.frame_ids = self.load_split_ids(split)
-        #self.frame_ids = self.frame_ids[:20]
+        #self.frame_ids = self.frame_ids[:100]
         self.num_channel = 4
 
         self.batch_idx = 0
@@ -52,11 +52,12 @@ class Dataset(object):
     def preprocess(self, save_path):
         frame_data = {}
         for frame_id in self.frame_ids:
-            pc, mask, proposal_of_point = self.load_frame_data(frame_id)
+            pc, mask, proposal_of_point, gt_boxes = self.load_frame_data(frame_id)
             frame_data['frame_id'] = frame_id
             frame_data['pointcloud'] = pc
             frame_data['mask_label'] = mask
             frame_data['proposal_of_point'] = proposal_of_point
+            frame_data['gt_boxes'] = gt_boxes
             with open(os.path.join(save_path, frame_id+'.pkl'),'wb') as fp:
                 pickle.dump(frame_data, fp)
 
@@ -111,6 +112,7 @@ class Dataset(object):
         batch_size_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
         batch_angle_res = np.zeros((bsize, self.npoints))
         batch_size_res = np.zeros((bsize, self.npoints, 3))
+        batch_gt_boxes = []
         for i in range(bsize):
             frame = self.data_buffer.get()
             objectness, center_cls, center_res, angle_cls, angle_res, size_cls, size_res = \
@@ -127,6 +129,7 @@ class Dataset(object):
             # batch_center_res[i,...] = center_res
             batch_angle_res[i,...] = angle_res
             batch_size_res[i,...] = size_res
+            batch_gt_boxes.append(frame['gt_boxes'])
         if self.batch_idx == total_batch - 1:
             is_last_batch = True
             self.batch_idx = 0
@@ -135,7 +138,7 @@ class Dataset(object):
         return batch_data, batch_label, batch_center_x_cls,\
             batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
             batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
-            batch_size_res, is_last_batch
+            batch_size_res, batch_gt_boxes, is_last_batch
 
     def load_frame_data(self, data_idx_str):
         '''load data for the first time'''
@@ -160,6 +163,7 @@ class Dataset(object):
         objects = filter(lambda obj: obj.type in type_whitelist, objects)
         # point index to proposal vector
         proposal_of_point = {}
+        gt_boxes = []
         for obj in objects:
             _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
             _,obj_mask = extract_pc_in_box3d(pc_rect, obj_box_3d)
@@ -167,8 +171,9 @@ class Dataset(object):
             obj_ids = np.where(obj_mask)[0]
             for idx in obj_ids:
                 proposal_of_point[idx] = obj_to_proposal_vec(obj, pc_rect[idx,:3])
+            gt_boxes.append(obj_box_3d)
 
-        return pc_rect, seg_mask, proposal_of_point
+        return pc_rect, seg_mask, proposal_of_point, gt_boxes
 
 if __name__ == '__main__':
     kitti_path = sys.argv[1]
@@ -179,11 +184,16 @@ if __name__ == '__main__':
     '''
     produce_thread = threading.Thread(target=dataset.load, args=('./train',))
     produce_thread.start()
+    i = 0
+    total = 0
     while(True):
-        batch_data, batch_label, is_last = dataset.get_next_batch(1)
-        print(batch_data.shape, batch_label.shape, is_last)
-        if is_last:
+        batch_data = dataset.get_next_batch(1)
+        total += np.sum(batch_data[1] == 1)
+        print('foreground points:', np.sum(batch_data[1] == 1))
+        if i >= 100:
             break
+        i += 1
+    print(total/i)
     dataset.stop_loading()
     print('stop loading')
     produce_thread.join()
