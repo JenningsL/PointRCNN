@@ -196,10 +196,10 @@ def train():
         for epoch in range(MAX_EPOCH):
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
-
-            train_one_epoch(sess, ops, train_writer)
+            # eval iou and recall is slow
+            eval_iou_recall = (epoch % 20 == 0 and epoch != 0)
+            train_one_epoch(sess, ops, train_writer, eval_iou_recall)
             #if epoch % 3 == 0:
-            val_loss = eval_one_epoch(sess, ops, test_writer)
             # Save the variables to disk.
             # if val_loss < best_val_loss:
             #     best_val_loss = val_loss
@@ -207,13 +207,14 @@ def train():
             #     log_string("Model saved in file: {0}, val_loss: {1}".format(save_path, val_loss))
             save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
             log_string("Model saved in file: {0}".format(save_path))
+            val_loss = eval_one_epoch(sess, ops, test_writer, eval_iou_recall)
     TRAIN_DATASET.stop_loading()
     TEST_DATASET.stop_loading()
     train_produce_thread.join()
     test_produce_thread.join()
 
 
-def train_one_epoch(sess, ops, train_writer):
+def train_one_epoch(sess, ops, train_writer, more=False):
     is_training = True
     log_string(str(datetime.now()))
 
@@ -252,13 +253,20 @@ def train_one_epoch(sess, ops, train_writer):
             ops['size_residuals']: batch_size_residuals,
             ops['is_training_pl']: is_training,
         }
-        summary, step, loss_val, _, logits_val, iou2ds, iou3ds, proposal_boxes = sess.run([
+        summary, step, loss_val, _, logits_val = sess.run([
             ops['merged'], ops['step'], ops['loss'], ops['train_op'],
-            ops['end_points']['foreground_logits'],
-            ops['end_points']['iou2ds'], ops['end_points']['iou3ds'], ops['end_points']['proposal_boxes']], feed_dict=feed_dict)
+            ops['end_points']['foreground_logits']], feed_dict=feed_dict)
 
-        # average on each frame
-        #proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes)
+        if more:
+            iou2ds, iou3ds, proposal_boxes = sess.run([
+                ops['end_points']['iou2ds'],
+                ops['end_points']['iou3ds'],
+                ops['end_points']['proposal_boxes']], feed_dict=feed_dict)
+            iou2ds_sum += np.sum(iou2ds)
+            iou3ds_sum += np.sum(iou3ds)
+            # average on each frame
+            proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes)
+            total_proposal_recall += proposal_recall * BATCH_SIZE
 
         train_writer.add_summary(summary, step)
 
@@ -274,9 +282,6 @@ def train_one_epoch(sess, ops, train_writer):
         total_fn += fn
         total_seen += NUM_POINT * BATCH_SIZE
         loss_sum += loss_val
-        iou2ds_sum += np.sum(iou2ds)
-        iou3ds_sum += np.sum(iou3ds)
-        #total_proposal_recall += proposal_recall * BATCH_SIZE
 
         if (batch_idx+1)%10 == 0:
             sample_num = 10 * BATCH_SIZE
@@ -290,6 +295,7 @@ def train_one_epoch(sess, ops, train_writer):
                     (float(total_tp)/(total_tp+total_fn)))
                 log_string('segmentation precision: %f'% \
                     (float(total_tp)/(total_tp+total_fp)))
+            if more:
                 log_string('box IoU (ground/3D): %f / %f' % \
                     (iou2ds_sum / float(NUM_FG_POINT*sample_num), iou3ds_sum / float(NUM_FG_POINT*sample_num)))
                 log_string('proposal recall: %f' % (float(total_proposal_recall) / sample_num))
@@ -307,7 +313,7 @@ def train_one_epoch(sess, ops, train_writer):
         batch_idx += 1
 
 
-def eval_one_epoch(sess, ops, test_writer):
+def eval_one_epoch(sess, ops, test_writer, more=False):
     global EPOCH_CNT
     is_training = False
     log_string(str(datetime.now()))
@@ -347,10 +353,21 @@ def eval_one_epoch(sess, ops, test_writer):
             ops['is_training_pl']: is_training,
         }
 
-        summary, step, loss_val, logits_val, iou2ds, iou3ds, proposal_boxes = sess.run([ops['merged'], ops['step'], ops['loss'],
-            ops['end_points']['foreground_logits'],
-            ops['end_points']['iou2ds'], ops['end_points']['iou3ds'], ops['end_points']['proposal_boxes']], feed_dict=feed_dict)
-        #proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes)
+        summary, step, loss_val, logits_val = sess.run([
+            ops['merged'], ops['step'], ops['loss'],
+            ops['end_points']['foreground_logits']], feed_dict=feed_dict)
+
+        if more:
+            iou2ds, iou3ds, proposal_boxes = sess.run([
+                ops['end_points']['iou2ds'],
+                ops['end_points']['iou3ds'],
+                ops['end_points']['proposal_boxes']], feed_dict=feed_dict)
+            iou2ds_sum += np.sum(iou2ds)
+            iou3ds_sum += np.sum(iou3ds)
+            # average on each frame
+            proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes)
+            total_proposal_recall += proposal_recall
+
         test_writer.add_summary(summary, step)
 
         # segmentation acc
@@ -366,9 +383,6 @@ def eval_one_epoch(sess, ops, test_writer):
         total_seen += NUM_POINT * BATCH_SIZE
         loss_sum += loss_val
         num_batches += BATCH_SIZE
-        iou2ds_sum += np.sum(iou2ds)
-        iou3ds_sum += np.sum(iou3ds)
-        #total_proposal_recall += proposal_recall
         if is_last_batch:
             break
 
@@ -379,9 +393,10 @@ def eval_one_epoch(sess, ops, test_writer):
         (float(total_tp)/(total_tp+total_fn)))
     log_string('eval segmentation precision: %f'% \
         (float(total_tp)/(total_tp+total_fp)))
-    log_string('eval box IoU (ground/3D): %f / %f' % \
-        (iou2ds_sum / float(NUM_FG_POINT*num_batches), iou3ds_sum / float(NUM_FG_POINT*num_batches)))
-    log_string('eval proposal recall: %f' % (float(total_proposal_recall) / num_batches))
+    if more:
+        log_string('eval box IoU (ground/3D): %f / %f' % \
+            (iou2ds_sum / float(NUM_FG_POINT*num_batches), iou3ds_sum / float(NUM_FG_POINT*num_batches)))
+        log_string('eval proposal recall: %f' % (float(total_proposal_recall) / num_batches))
     EPOCH_CNT += 1
     return loss_sum / float(num_batches)
 

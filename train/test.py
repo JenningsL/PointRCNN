@@ -15,6 +15,7 @@ sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 from kitti import Dataset
+from train_util import compute_proposal_recall
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
@@ -156,21 +157,35 @@ def test():
         fg_indices.append(indices_val[0])
         proposal_boxes.append(boxes_val[0])
         gt_boxes.append(batch_gt_boxes[0])
-        # if is_last_batch:
-        if num_batches >= 10:
+        if is_last_batch:
+        #if num_batches >= 100:
             break
 
     with open('prediction.pkl','wb') as fp:
-        pickle.dump(pointclouds, fp)
-        pickle.dump(preds, fp)
-        pickle.dump(labels, fp)
-        pickle.dump(fg_points, fp)
-        pickle.dump(fg_indices, fp)
+        #pickle.dump(pointclouds, fp)
+        #pickle.dump(preds, fp)
+        #pickle.dump(labels, fp)
+        #pickle.dump(fg_points, fp)
+        #pickle.dump(fg_indices, fp)
         pickle.dump(proposal_boxes, fp)
         pickle.dump(gt_boxes, fp)
     log_string('saved prediction')
     TEST_DATASET.stop_loading()
     test_produce_thread.join()
+
+    cal_recall(proposal_boxes, gt_boxes)
+
+
+def cal_recall(proposal_boxes, gt_boxes):
+    rec = 0
+    total = 0
+    for i in range(len(proposal_boxes)):
+        if len(gt_boxes[i]) == 0:
+            continue
+        total += 1
+        recall = compute_proposal_recall([proposal_boxes[i]], [gt_boxes[i]])
+        rec += recall
+    print('Average recall: ', float(rec)/total)
 
 if __name__ == "__main__":
     log_string('pid: %s'%(str(os.getpid())))
