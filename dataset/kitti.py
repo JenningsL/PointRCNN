@@ -8,14 +8,17 @@ import random
 import threading
 from Queue import Queue
 import time
+import math
 import cPickle as pickle
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'kitti'))
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
+sys.path.append(os.path.join(ROOT_DIR, 'visualize/mayavi'))
 from kitti_object import *
 from parameterize import obj_to_proposal_vec
 import kitti_util as utils
+from data_util import rotate_points_along_y, shift_point_cloud
 type_whitelist = ['Car', 'Pedestrian', 'Cyclist']
 
 def in_hull(p, hull):
@@ -37,7 +40,7 @@ class Dataset(object):
         self.split = split
         self.kitti_dataset = kitti_object(kitti_path, 'training')
         self.frame_ids = self.load_split_ids(split)
-        #self.frame_ids = self.frame_ids[:100]
+        # self.frame_ids = self.frame_ids[:100]
         self.num_channel = 4
 
         self.batch_idx = 0
@@ -49,26 +52,20 @@ class Dataset(object):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
             return [line.rstrip('\n') for line in f]
 
-    def preprocess(self, save_path):
-        frame_data = {}
-        for frame_id in self.frame_ids:
-            pc, mask, proposal_of_point, gt_boxes = self.load_frame_data(frame_id)
-            frame_data['frame_id'] = frame_id
-            frame_data['pointcloud'] = pc
-            frame_data['mask_label'] = mask
-            frame_data['proposal_of_point'] = proposal_of_point
-            frame_data['gt_boxes'] = gt_boxes
-            with open(os.path.join(save_path, frame_id+'.pkl'),'wb') as fp:
-                pickle.dump(frame_data, fp)
-
     def load(self, save_path):
         i = 0
         while not self.stop:
             frame_id = self.frame_ids[i]
             #print('loading ' + frame_id)
-            with open(os.path.join(save_path, frame_id+'.pkl'), 'rb') as f:
-                frame_data = pickle.load(f)
-                self.data_buffer.put(frame_data)
+            frame_data = {}
+            pc, mask, proposal_of_point, gt_boxes = \
+                self.load_frame_data(frame_id, random_flip=True, random_rotate=True, random_shift=True)
+            frame_data['frame_id'] = frame_id
+            frame_data['pointcloud'] = pc
+            frame_data['mask_label'] = mask
+            frame_data['proposal_of_point'] = proposal_of_point
+            frame_data['gt_boxes'] = gt_boxes
+            self.data_buffer.put(frame_data)
             i = (i + 1) % len(self.frame_ids)
 
     def stop_loading(self):
@@ -140,8 +137,17 @@ class Dataset(object):
             batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
             batch_size_res, batch_gt_boxes, is_last_batch
 
-    def load_frame_data(self, data_idx_str):
-        '''load data for the first time'''
+    def viz_frame(self, pc_rect, mask, gt_boxes):
+        import mayavi.mlab as mlab
+        from viz_util import draw_lidar, draw_lidar_simple, draw_gt_boxes3d
+        fig = draw_lidar(pc_rect)
+        fig = draw_lidar(pc_rect[mask==1], fig=fig, pts_color=(1, 1, 1))
+        fig = draw_gt_boxes3d(gt_boxes, fig, draw_text=False, color=(1, 1, 1))
+        raw_input()
+
+    def load_frame_data(self, data_idx_str,
+        random_flip=False, random_rotate=False, random_shift=False):
+        '''load one frame'''
         start = time.time()
         data_idx = int(data_idx_str)
         # print(data_idx_str)
@@ -161,6 +167,18 @@ class Dataset(object):
         pc_rect[:,3] = point_set[:,3]
         seg_mask = np.zeros((pc_rect.shape[0]))
         objects = filter(lambda obj: obj.type in type_whitelist, objects)
+        # data augmentation
+        if random_flip and np.random.random()>0.5: # 50% chance flipping
+            pc_rect[:,0] *= -1
+            for obj in objects:
+                obj.t = [-obj.t[0], obj.t[1], obj.t[2]]
+                obj.ry = np.pi - obj.ry
+        if random_rotate:
+            ry = (np.random.random() - 0.5) * math.radians(20) # -10~10 degrees
+            pc_rect[:,0:3] = rotate_points_along_y(pc_rect[:,0:3], ry)
+            for obj in objects:
+                obj.t = rotate_points_along_y(obj.t, ry)
+                obj.ry -= ry
         # point index to proposal vector
         proposal_of_point = {}
         gt_boxes = []
@@ -172,14 +190,18 @@ class Dataset(object):
             for idx in obj_ids:
                 proposal_of_point[idx] = obj_to_proposal_vec(obj, pc_rect[idx,:3])
             gt_boxes.append(obj_box_3d)
+        # data augmentation
+        if random_shift: # jitter object points
+            obj_ids = np.where(seg_mask==1)[0]
+            pc_rect[obj_ids,:3] = shift_point_cloud(pc_rect[obj_ids,:3], 0.1)
 
+        # self.viz_frame(pc_rect, seg_mask, gt_boxes)
         return pc_rect, seg_mask, proposal_of_point, gt_boxes
 
 if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
     dataset = Dataset(16384, kitti_path, split)
-    dataset.preprocess(split)
 
     '''
     produce_thread = threading.Thread(target=dataset.load, args=('./train',))
@@ -190,7 +212,7 @@ if __name__ == '__main__':
         batch_data = dataset.get_next_batch(1)
         total += np.sum(batch_data[1] == 1)
         print('foreground points:', np.sum(batch_data[1] == 1))
-        if i >= 100:
+        if i >= 10:
             break
         i += 1
     print(total/i)
