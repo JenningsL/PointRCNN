@@ -91,9 +91,9 @@ TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
 def train():
     ''' Main function for training and simple evaluation. '''
     # data loading threads
-    train_produce_thread = Thread(target=TRAIN_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train',))
+    train_produce_thread = Thread(target=TRAIN_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train', True))
     train_produce_thread.start()
-    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val',))
+    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val', False))
     test_produce_thread.start()
 
     with tf.Graph().as_default():
@@ -130,7 +130,7 @@ def train():
             }
             end_points = MODEL.get_model(pointclouds_pl, mask_labels_pl,
                 is_training_pl, bn_decay, end_points)
-            loss = MODEL.get_loss(labels_pl, end_points)
+            loss, loss_endpoints = MODEL.get_loss(labels_pl, end_points)
 
             iou2ds, iou3ds = tf.py_func(train_util.compute_box3d_iou, [
                 end_points['fg_points_xyz'], end_points['fg_point_indices'],
@@ -190,6 +190,7 @@ def train():
             'train_op': train_op,
             'step': batch,
             'merged': merged,
+            'loss_endpoints': loss_endpoints,
             'end_points': end_points}
         ops.update(labels_pl)
 
@@ -197,7 +198,7 @@ def train():
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
             # eval iou and recall is slow
-            eval_iou_recall = (epoch % 20 == 0 and epoch != 0)
+            eval_iou_recall = (epoch % 10 == 0 and epoch != 0)
             train_one_epoch(sess, ops, train_writer, eval_iou_recall)
             #if epoch % 3 == 0:
             # Save the variables to disk.
@@ -299,6 +300,9 @@ def train_one_epoch(sess, ops, train_writer, more=False):
                 log_string('box IoU (ground/3D): %f / %f' % \
                     (iou2ds_sum / float(NUM_FG_POINT*sample_num), iou3ds_sum / float(NUM_FG_POINT*sample_num)))
                 log_string('proposal recall: %f' % (float(total_proposal_recall) / sample_num))
+            if np.isnan(loss_sum):
+                for k,v in ops['loss_endpoints'].items():
+                    print(k, v.eval(session=sess))
             total_correct = 0
             total_seen = 0
             total_tp = 0

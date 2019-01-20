@@ -342,8 +342,8 @@ def get_loss(labels, end_points):
     batch_size = end_points['foreground_logits'].get_shape()[0].value
     #npoints = end_points['foreground_logits'].get_shape()[1].value
     # 3D Segmentation loss
-    mask_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
-       logits=end_points['foreground_logits'], labels=labels['mask_label']))
+    #mask_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
+    #   logits=end_points['foreground_logits'], labels=labels['mask_label']))
     mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(labels['mask_label'], 2, axis=-1))
     tf.summary.scalar('mask loss', mask_loss)
     props = end_points['proposals']
@@ -427,13 +427,25 @@ def get_loss(labels, end_points):
 
     seg_weight = 0.1
     cls_weight = 10
-    res_weight = 1
+    res_weight = 10
     total_loss = seg_weight * mask_loss + \
         cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
-        res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + 20*heading_res_loss + 10*size_res_loss)
+        res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + heading_res_loss + size_res_loss)
     '''
     total_loss = cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
         res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + 20*heading_res_loss + 10*size_res_loss)
     '''
+    loss_endpoints = {
+        'size_class_loss': size_class_loss,
+        'size_res_loss': size_res_loss,
+        'heading_class_loss': heading_class_loss,
+        'heading_res_loss': heading_res_loss,
+        'center_x_cls_loss': center_x_cls_loss,
+        'center_z_cls_loss': center_z_cls_loss,
+        'center_x_res_loss': center_x_res_loss,
+        'center_z_res_loss': center_z_res_loss,
+        'center_y_res_loss': center_y_res_loss,
+        'mask_loss': mask_loss
+    }
 
-    return total_loss
+    return total_loss, loss_endpoints
