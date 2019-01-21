@@ -101,7 +101,8 @@ def train():
             pointclouds_pl, mask_labels_pl, \
             center_bin_x_pl, center_bin_z_pl,\
             center_x_residuals_pl, center_z_residuals_pl, center_y_residuals_pl, heading_bin_pl,\
-            heading_residuals_pl, size_class_pl, size_residuals_pl \
+            heading_residuals_pl, size_class_pl, size_residuals_pl, \
+            gt_box_of_point_pl \
                 = MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
 
             is_training_pl = tf.placeholder(tf.bool, shape=())
@@ -126,26 +127,23 @@ def train():
                 'heading_bin': heading_bin_pl,
                 'heading_residuals': heading_residuals_pl,
                 'size_class': size_class_pl,
-                'size_residuals': size_residuals_pl
+                'size_residuals': size_residuals_pl,
+                'gt_box_of_point': gt_box_of_point_pl
             }
             end_points = MODEL.get_model(pointclouds_pl, mask_labels_pl,
                 is_training_pl, bn_decay, end_points)
             loss, loss_endpoints = MODEL.get_loss(labels_pl, end_points)
 
             iou2ds, iou3ds = tf.py_func(train_util.compute_box3d_iou, [
-                end_points['fg_points_xyz'], end_points['fg_point_indices'],
-                end_points['heading_scores'], end_points['heading_residuals_normalized'],
-                end_points['size_scores'], end_points['size_residuals_normalized'],
-                end_points['center_x_scores'], end_points['center_z_scores'],
-                end_points['center_x_residuals_normalized'], end_points['center_y_residuals'],
-                end_points['center_z_residuals_normalized'],
-                labels_pl['heading_bin'], labels_pl['heading_residuals'], labels_pl['size_class'], labels_pl['size_residuals'],
-                labels_pl['center_bin_x'], labels_pl['center_bin_z'],
-                labels_pl['center_x_residuals'], labels_pl['center_y_residuals'], labels_pl['center_z_residuals']
-                ],
-                [tf.float32, tf.float32])
+                    tf.reshape(end_points['proposal_boxes'], [BATCH_SIZE*FG_POINT_NUM,8,3]),
+                    tf.reshape(gt_box_of_point_pl, [BATCH_SIZE*FG_POINT_NUM,8,3])
+                ], [tf.float32, tf.float32])
             end_points['iou2ds'] = iou2ds
             end_points['iou3ds'] = iou3ds
+
+            eval_recall = tf.py_func(train_util.compute_proposal_recall, [
+                end_points['proposal_boxes'], tf.constant(batch_gt_boxes, dtype=tf.float32)
+            ], tf.float32)
 
             # Get training operator
             learning_rate = get_learning_rate(batch)
@@ -191,6 +189,7 @@ def train():
             'step': batch,
             'merged': merged,
             'loss_endpoints': loss_endpoints,
+            'eval_recall': eval_recall,
             'end_points': end_points}
         ops.update(labels_pl)
 
@@ -238,7 +237,8 @@ def train_one_epoch(sess, ops, train_writer, more=False):
         batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
         batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
         batch_heading_residuals, batch_size_class, batch_size_residuals, batch_gt_boxes, \
-        is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
+        batch_gt_box_of_point, is_last_batch \
+        = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {
             ops['pointclouds_pl']: batch_pc,
@@ -252,22 +252,24 @@ def train_one_epoch(sess, ops, train_writer, more=False):
             ops['heading_residuals']: batch_heading_residuals,
             ops['size_class']: batch_size_class,
             ops['size_residuals']: batch_size_residuals,
+            ops['gt_box_of_point']: batch_gt_box_of_point,
             ops['is_training_pl']: is_training,
         }
-        summary, step, loss_val, _, logits_val = sess.run([
-            ops['merged'], ops['step'], ops['loss'], ops['train_op'],
-            ops['end_points']['foreground_logits']], feed_dict=feed_dict)
-
         if more:
-            iou2ds, iou3ds, proposal_boxes = sess.run([
-                ops['end_points']['iou2ds'],
-                ops['end_points']['iou3ds'],
-                ops['end_points']['proposal_boxes']], feed_dict=feed_dict)
+            summary, step, loss_val, _, logits_val, iou2ds, iou3ds, proposal_recall \
+            = sess.run([
+                ops['merged'], ops['step'], ops['loss'], ops['train_op'],
+                ops['end_points']['foreground_logits']],
+                ops['end_points']['iou2ds'], ops['end_points']['iou3ds'],
+                ops['eval_recall'], feed_dict=feed_dict)
             iou2ds_sum += np.sum(iou2ds)
             iou3ds_sum += np.sum(iou3ds)
             # average on each frame
-            proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes)
             total_proposal_recall += proposal_recall * BATCH_SIZE
+        else:
+            summary, step, loss_val, _, logits_val = sess.run([
+                ops['merged'], ops['step'], ops['loss'], ops['train_op'],
+                ops['end_points']['foreground_logits']], feed_dict=feed_dict)
 
         train_writer.add_summary(summary, step)
 
@@ -340,7 +342,8 @@ def eval_one_epoch(sess, ops, test_writer, more=False):
         batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
         batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
         batch_heading_residuals, batch_size_class, batch_size_residuals, batch_gt_boxes, \
-        is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
+        batch_gt_box_of_point, is_last_batch \
+        = TEST_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {
             ops['pointclouds_pl']: batch_pc,
@@ -354,6 +357,7 @@ def eval_one_epoch(sess, ops, test_writer, more=False):
             ops['heading_residuals']: batch_heading_residuals,
             ops['size_class']: batch_size_class,
             ops['size_residuals']: batch_size_residuals,
+            ops['gt_box_of_point']: batch_gt_box_of_point,
             ops['is_training_pl']: is_training,
         }
 
@@ -362,16 +366,20 @@ def eval_one_epoch(sess, ops, test_writer, more=False):
             ops['end_points']['foreground_logits']], feed_dict=feed_dict)
 
         if more:
-            iou2ds, iou3ds, proposal_boxes = sess.run([
-                ops['end_points']['iou2ds'],
-                ops['end_points']['iou3ds'],
-                ops['end_points']['proposal_boxes']], feed_dict=feed_dict)
+            summary, step, loss_val, logits_val, iou2ds, iou3ds, proposal_recall \
+            = sess.run([
+                ops['merged'], ops['step'], ops['loss'],
+                ops['end_points']['foreground_logits']],
+                ops['end_points']['iou2ds'], ops['end_points']['iou3ds'],
+                ops['eval_recall'], feed_dict=feed_dict)
             iou2ds_sum += np.sum(iou2ds)
             iou3ds_sum += np.sum(iou3ds)
             # average on each frame
-            proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes)
             total_proposal_recall += proposal_recall
-
+        else:
+            summary, step, loss_val, logits_val = sess.run([
+                ops['merged'], ops['step'], ops['loss'],
+                ops['end_points']['foreground_logits']], feed_dict=feed_dict)
         test_writer.add_summary(summary, step)
 
         # segmentation acc

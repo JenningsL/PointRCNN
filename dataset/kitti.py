@@ -61,12 +61,13 @@ class Dataset(object):
             #print('loading ' + frame_id)
             for x in range(self.AUG_X):
                 frame_data = {}
-                pc, mask, proposal_of_point, gt_boxes = \
+                pc, mask, proposal_of_point, gt_box_of_point, gt_boxes = \
                     self.load_frame_data(frame_id, random_flip=aug, random_rotate=aug, random_shift=aug)
                 frame_data['frame_id'] = frame_id
                 frame_data['pointcloud'] = pc
                 frame_data['mask_label'] = mask
-                frame_data['proposal_of_point'] = proposal_of_point
+                frame_data['proposal_of_point'] = self.get_proposal_out(proposal_of_point)
+                frame_data['gt_box_of_point'] = self.get_gt_box_of_points(gt_box_of_point)
                 frame_data['gt_boxes'] = gt_boxes
                 self.data_buffer.put(frame_data)
             i = (i + 1) % len(self.frame_ids)
@@ -77,7 +78,8 @@ class Dataset(object):
             item = self.data_buffer.get()
             self.data_buffer.task_done()
 
-    def get_proposal_out(self, frame_data):
+    def get_proposal_out(self, proposal_dict):
+        '''assign the parameterized box to each point'''
         objectness = np.zeros((self.npoints,), dtype=np.int32)
         center_cls = np.zeros((self.npoints,2), dtype=np.int32)
         angle_cls = np.zeros((self.npoints,), dtype=np.int32)
@@ -85,7 +87,7 @@ class Dataset(object):
         center_res = np.zeros((self.npoints, 3))
         angle_res = np.zeros((self.npoints,))
         size_res = np.zeros((self.npoints, 3))
-        for i, prop in frame_data['proposal_of_point'].items():
+        for i, prop in proposal_dict.items():
             objectness[i] = 1
             center_cls[i] = prop[0]
             center_res[i] = prop[1]
@@ -94,6 +96,13 @@ class Dataset(object):
             size_cls[i] = prop[4]
             size_res[i] = prop[5]
         return objectness, center_cls, center_res, angle_cls, angle_res, size_cls, size_res
+
+    def get_gt_box_of_points(self, box_dict):
+        '''assign a ground truth box(corners) to each point'''
+        boxes = np.zeros((self.npoints,8,3), dtype=np.float32)
+        for i, box in gt_box_of_point:
+            boxes[i] = box_dict[i]
+        return boxes
 
     def get_next_batch(self, bsize):
         is_last_batch = False
@@ -105,18 +114,19 @@ class Dataset(object):
         batch_objectness = np.zeros((bsize, self.npoints), dtype=np.int32)
         batch_center_x_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
         batch_center_z_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
-        batch_center_x_res = np.zeros((bsize, self.npoints))
-        batch_center_y_res = np.zeros((bsize, self.npoints))
-        batch_center_z_res = np.zeros((bsize, self.npoints))
+        batch_center_x_res = np.zeros((bsize, self.npoints), dtype=np.float32)
+        batch_center_y_res = np.zeros((bsize, self.npoints), dtype=np.float32)
+        batch_center_z_res = np.zeros((bsize, self.npoints), dtype=np.float32)
         batch_angle_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
         batch_size_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
-        batch_angle_res = np.zeros((bsize, self.npoints))
-        batch_size_res = np.zeros((bsize, self.npoints, 3))
+        batch_angle_res = np.zeros((bsize, self.npoints), dtype=np.float32)
+        batch_size_res = np.zeros((bsize, self.npoints, 3), dtype=np.float32)
+        batch_gt_box_of_point = np.zeros((bsize, self.npoints, 8, 3), dtype=np.float32)
         batch_gt_boxes = []
         for i in range(bsize):
             frame = self.data_buffer.get()
             objectness, center_cls, center_res, angle_cls, angle_res, size_cls, size_res = \
-                self.get_proposal_out(frame)
+                frame['proposal_of_point']
             batch_data[i,...] = frame['pointcloud']
             batch_label[i,:] = frame['mask_label']
             batch_center_x_cls[i,...] = center_cls[:,0]
@@ -129,6 +139,7 @@ class Dataset(object):
             # batch_center_res[i,...] = center_res
             batch_angle_res[i,...] = angle_res
             batch_size_res[i,...] = size_res
+            batch_gt_box_of_point[i,...] = frame['gt_box_of_point']
             batch_gt_boxes.append(frame['gt_boxes'])
         if self.batch_idx == total_batch - 1:
             is_last_batch = True
@@ -139,7 +150,7 @@ class Dataset(object):
         return batch_data, batch_label, batch_center_x_cls,\
             batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
             batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
-            batch_size_res, batch_gt_boxes, is_last_batch
+            batch_size_res, batch_gt_boxes, batch_gt_box_of_point, is_last_batch
 
     def viz_frame(self, pc_rect, mask, gt_boxes):
         import mayavi.mlab as mlab
@@ -171,7 +182,7 @@ class Dataset(object):
         pc_rect[:,3] = point_set[:,3]
         seg_mask = np.zeros((pc_rect.shape[0]))
         objects = filter(lambda obj: obj.type in type_whitelist, objects)
-        gt_boxes = []
+        gt_boxes = [] # ground truth boxes
         # data augmentation
         if random_flip and np.random.random()>0.5: # 50% chance flipping
             pc_rect[:,0] *= -1
@@ -184,8 +195,8 @@ class Dataset(object):
             for obj in objects:
                 obj.t = rotate_points_along_y(obj.t, ry)
                 obj.ry -= ry
-        # point index to proposal vector
-        proposal_of_point = {}
+        proposal_of_point = {} # point index to proposal vector
+        gt_box_of_point = {} # point index to corners_3d
         for obj in objects:
             _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
             _,obj_mask = extract_pc_in_box3d(pc_rect, obj_box_3d)
@@ -198,8 +209,9 @@ class Dataset(object):
                 pc_rect[obj_idxs,:3] = shift_point_cloud(pc_rect[obj_idxs,:3], 0.02)
             for idx in obj_idxs:
                 proposal_of_point[idx] = obj_to_proposal_vec(obj, pc_rect[idx,:3])
+                gt_box_of_point[idx] = obj_box_3d
         # self.viz_frame(pc_rect, seg_mask, gt_boxes)
-        return pc_rect, seg_mask, proposal_of_point, gt_boxes
+        return pc_rect, seg_mask, proposal_of_point, gt_box_of_point, gt_boxes
 
 if __name__ == '__main__':
     kitti_path = sys.argv[1]

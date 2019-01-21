@@ -289,9 +289,10 @@ def placeholder_inputs(batch_size, num_point):
     heading_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point))
     size_class_labels = tf.placeholder(tf.int32, shape=(batch_size, num_point))
     size_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point, 3))
+    gt_box_of_point = tf.placeholder(tf.float32, shape=(batch_size, num_point, 8, 3))
     return pointclouds_pl, seg_labels_pl, center_bin_x_labels, center_bin_z_labels,\
         center_x_residuals_labels, center_z_residuals_labels, center_y_residuals_labels, heading_bin_labels,\
-        heading_residuals_labels, size_class_labels, size_residuals_labels
+        heading_residuals_labels, size_class_labels, size_residuals_labels, gt_box_of_point
 
 
 def point_cloud_masking(point_cloud, logits, end_points, xyz_only=True):
