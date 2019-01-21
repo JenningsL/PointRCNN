@@ -6,8 +6,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
-from parameterize import NUM_CENTER_BIN, NUM_HEADING_BIN, NUM_SIZE_CLUSTER, type_mean_size
-from parameterize import class2angle, class2size, class2center, NUM_HEADING_BIN
+from parameterize import NUM_CENTER_BIN, NUM_HEADING_BIN, NUM_SIZE_CLUSTER, CENTER_SEARCH_RANGE, type_mean_size
+from parameterize import class2angle, class2size, class2center
 from box_util import get_3d_box
 import tf_util
 from tensorflow.python.ops import array_ops
@@ -106,32 +106,76 @@ def get_box3d_corners(center, heading_residuals, size_residuals):
 
     return tf.reshape(corners_3d, [batch_size, NUM_HEADING_BIN, NUM_SIZE_CLUSTER, 8, 3])
 
-def get_3d_box_from_output(points, heading_logits, heading_residuals, size_logits, size_residuals, \
-        center_x_logits, center_z_logits, center_x_residuals, center_y_residuals, center_z_residuals):
-    batch_size = points.shape[0]
-    fg_points = points.shape[1]
-    heading_class = np.argmax(heading_logits, 2) # B,M
-    size_class = np.argmax(size_logits, 2) # B,M
-    center_x_cls = np.argmax(center_x_logits, 2)
-    center_z_cls = np.argmax(center_z_logits, 2)
-    center_cls = np.stack([center_x_cls, center_z_cls], axis=-1)
-    batch_corners_3d_list = []
-    for i in range(batch_size):
-        corners_3d_list = []
-        for j in range(fg_points):
-            heading_angle = class2angle(heading_class[i,j],
-                heading_residuals[i,j, heading_class[i,j]], NUM_HEADING_BIN)
-            box_size = class2size(size_class[i,j], size_residuals[i,j,size_class[i,j]])
-            center_res = np.array([
-                center_x_residuals[i,j,center_x_cls[i,j]],
-                center_y_residuals[i,j],
-                center_z_residuals[i,j,center_z_cls[i,j]]
-            ])
-            center_pred = class2center(center_cls[i,j], center_res, points[i,j])
-            corners_3d = get_3d_box(box_size, heading_angle, center_pred)
-            corners_3d_list.append(corners_3d)
-        batch_corners_3d_list.append(corners_3d_list)
-    return np.array(batch_corners_3d_list, dtype=np.float32)
+def get_3d_box_from_output(end_points):
+    """ Parse tensor output to 3d box
+    Inputs:
+        end_points['fg_points_xyz'] # (B,N,3)
+        end_points['center_x_scores'] # (B,N)
+        end_points['center_x_residuals_normalized'] # (B,N,NUM_CENTER_BIN)
+        end_points['center_z_scores'] # (B,N)
+        end_points['center_z_residuals_normalized'] # (B,N,NUM_CENTER_BIN)
+        end_points['center_y_residuals'] # (B,N,1)
+        end_points['heading_scores'] # (B,N,NUM_HEADING_BIN)
+        end_points['heading_residuals_normalized'] # (B,N,NUM_HEADING_BIN)
+        end_points['size_scores'] # (B,N,NUM_SIZE_CLUSTER)
+        end_points['size_residuals_normalized'] # (B,N,NUM_SIZE_CLUSTER,3)
+    Outputs:
+        center: (B,N,3) tensor
+        angle: (B,N) tensor
+        box_size: (B,N,3) tensor
+    """
+    batch_size = end_points['fg_points_xyz'].shape[0]
+    fg_points_num = end_points['fg_points_xyz'].shape[1]
+    # center
+    bin_x = tf.math.argmax(end_points['center_x_scores'], axis=-1) # (B,N)
+    bin_x_onehot = tf.one_hot(bin_x, depth=NUM_CENTER_BIN, axis=-1) # (B,N,NUM_CENTER_BIN)
+    center_x_residuals_normalized = tf.reduce_sum(
+        end_points['center_x_residuals_normalized']*tf.to_float(bin_x_onehot), axis=2) # BxN
+    bin_z = tf.math.argmax(end_points['center_z_scores'], axis=-1) # (B,N)
+    bin_z_onehot = tf.one_hot(bin_z, depth=NUM_CENTER_BIN, axis=-1) # (B,N,NUM_CENTER_BIN)
+    center_z_residuals_normalized = tf.reduce_sum(
+        end_points['center_z_residuals_normalized']*tf.to_float(bin_z_onehot), axis=2) # BxN
+    center_y_residuals = end_points['center_y_residuals']
+    points_xyz = end_points['fg_points_xyz']
+    bin_size = tf.constant(CENTER_BIN_SIZE, dtype=tf.float32)
+    search_range = tf.constant(CENTER_SEARCH_RANGE, dtype=tf.float32)
+
+    bin_center = tf.stack([
+        tf.to_float(bin_x) * bin_size + bin_size/2 - search_range + tf.gather(points_xyz, 0, axis=-1),
+        tf.gather(points_xyz, 1, axis=-1),
+        tf.to_float(bin_z) * bin_size + bin_size/2 - search_range + tf.gather(points_xyz, 2, axis=-1)
+    ], axis=-1) # (B,N,3)
+    center_res = tf.stack([
+        center_x_residuals_normalized * bin_size,
+        # tf.gather(center_y_residuals, 0, axis=-1),
+        center_y_residuals,
+        center_z_residuals_normalized * bin_size
+    ], axis=-1)
+    center = bin_center + center_res # (B,N,3)
+    # heading
+    heading_cls = tf.argmax(end_points['heading_scores'], axis=-1)
+    heading_one_hot = tf.one_hot(heading_cls, depth=NUM_HEADING_BIN, axis=-1)
+    heading_res_norm = tf.reduce_sum(end_points['heading_residuals_normalized']*tf.to_float(heading_one_hot), axis=2) # BxN
+    angle_per_class = tf.constant(2*np.pi/float(NUM_HEADING_BIN), dtype=tf.float32)
+    angle = tf.to_float(heading_cls) * angle_per_class + heading_res_norm * angle_per_class
+    # to label format
+    angle = tf.where(angle > np.pi, angle - 2*np.pi, angle) # (B,N)
+    # size
+    size_cls = tf.argmax(end_points['size_scores'], axis=-1)
+    size_one_hot = tf.one_hot(size_cls, depth=NUM_SIZE_CLUSTER, axis=-1)
+    size_one_hot_tiled = tf.tile(
+        tf.expand_dims(tf.to_float(size_one_hot), -1), [1,1,1,3]) # BxNxNUM_SIZE_CLUSTERx3
+    size_res_norm = tf.reduce_sum(
+        end_points['size_residuals_normalized']*size_one_hot_tiled, axis=2) # BxNx3
+    mean_size_arr_expand = tf.expand_dims(tf.expand_dims( \
+        tf.constant(type_mean_size, dtype=tf.float32),0), 0) # NUM_SIZE_CLUSTERx3 -> 1x1xNUM_SIZE_CLUSTERx3
+    mean_size_arr_expand_tiled = tf.tile(mean_size_arr_expand, [batch_size, fg_points_num, 1, 1])
+    mean_size = tf.reduce_sum( \
+        size_one_hot_tiled * mean_size_arr_expand_tiled, axis=2) # BxNx3
+    size_res = size_res_norm * mean_size
+    box_size = mean_size + size_res # (B,N,3)
+
+    return center, angle, box_size
 
 def huber_loss(error, delta):
     abs_error = tf.abs(error)
@@ -214,13 +258,11 @@ def parse_output_to_tensors(output, end_points):
     end_points['size_residuals_normalized'] = size_residuals_normalized
     # end_points['size_residuals'] = size_residuals_normalized * \
     #     tf.expand_dims(tf.constant(type_mean_size, dtype=tf.float32), 0)
-    end_points['proposal_boxes'] = tf.py_func(get_3d_box_from_output, [
-        end_points['fg_points_xyz'], end_points['heading_scores'], end_points['heading_residuals_normalized'],
-        end_points['size_scores'], end_points['size_residuals_normalized'], end_points['center_x_scores'],
-        end_points['center_z_scores'], end_points['center_x_residuals_normalized'],
-        end_points['center_y_residuals'], end_points['center_z_residuals_normalized']
-        ], tf.float32)
-    end_points['proposal_boxes'].set_shape([batch_size, npoints, 8, 3])
+    box_center, box_angle, box_size = get_3d_box_from_output(end_points)
+    box_num = batch_size * npoints
+    corners_3d = get_box3d_corners_helper(
+        tf.reshape(centers, [box_num,3]), tf.reshape(angles, [box_num]), tf.reshape(sizes, [box_num,3]))
+    end_points['proposal_boxes'] = corners_3d
     return end_points
 
 # --------------------------------------
@@ -394,7 +436,7 @@ def get_loss(labels, end_points):
         depth=NUM_HEADING_BIN,
         on_value=1, off_value=0, axis=-1) # BxNxNUM_HEADING_BIN
     heading_residual_normalized_label = \
-        labels_fg['heading_residuals'] / (np.pi/NUM_HEADING_BIN)
+        labels_fg['heading_residuals'] / (2*np.pi/float(NUM_HEADING_BIN))
     heading_res_loss = huber_loss(tf.reduce_sum( \
         end_points['heading_residuals_normalized']*tf.to_float(hcls_onehot), axis=2) - \
         heading_residual_normalized_label, delta=1.0)
@@ -431,9 +473,59 @@ def get_loss(labels, end_points):
     total_loss = seg_weight * mask_loss + \
         cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
         res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + 20*heading_res_loss + 10*size_res_loss)
-    '''
-    total_loss = cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
-        res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + 20*heading_res_loss + 10*size_res_loss)
-    '''
 
     return total_loss
+
+if __name__ == '__main__':
+    import math
+    from parameterize import obj_to_proposal_vec, CENTER_BIN_SIZE
+    class Box(object):
+        pass
+    obj = Box()
+    obj.t = np.array([-28.3,1.2,5.2])
+    obj.ry = math.pi * 0.3
+    obj.l = 1
+    obj.w = 0.6
+    obj.h = 0.7
+    point = np.array([-27.1,1.3,4.3])
+    center_cls, center_res, angle_cls,angle_res, size_cls, size_res = obj_to_proposal_vec(obj, point)
+    angle_res /= (2*np.pi/float(NUM_HEADING_BIN))
+    size_res /= type_mean_size[size_cls]
+    # print(center_cls, center_res, angle_cls,angle_res, size_cls, size_res)
+    # print(class2center(center_cls, center_res, point))
+    # print(class2size(size_cls, size_res))
+    # print(class2angle(angle_cls,angle_res, NUM_HEADING_BIN))
+
+    def get_one_hot(targets, nb_classes):
+        res = np.eye(nb_classes)[np.array(targets).reshape(-1)]
+        return res.reshape(list(np.array(targets).shape)+[nb_classes])[0]
+
+    center_x_scores = get_one_hot(center_cls[0:1],NUM_CENTER_BIN)
+    center_x_residuals_normalized = np.tile(center_res[:1], NUM_CENTER_BIN)
+    center_z_scores = get_one_hot(center_cls[1:],NUM_CENTER_BIN)
+    center_z_residuals_normalized = np.tile(center_res[2:], NUM_CENTER_BIN)
+    heading_scores = get_one_hot([angle_cls], NUM_HEADING_BIN)
+    heading_residuals_normalized = np.tile([angle_res], NUM_HEADING_BIN)
+    size_scores = get_one_hot([size_cls], NUM_SIZE_CLUSTER)
+    size_residuals_normalized = np.tile([size_res], (NUM_SIZE_CLUSTER,1))
+    centers, angles, sizes = get_3d_box_from_output({
+        'fg_points_xyz': tf.constant(np.array([[point]]), dtype=tf.float32),
+        'center_x_scores': tf.constant(np.array([[center_x_scores]]), dtype=tf.float32),
+        'center_x_residuals_normalized': tf.constant(np.array([[center_x_residuals_normalized]]), dtype=tf.float32),
+        'center_z_scores': tf.constant(np.array([[center_z_scores]]), dtype=tf.float32),
+        'center_z_residuals_normalized': tf.constant(np.array([[center_z_residuals_normalized]]), dtype=tf.float32),
+        'center_y_residuals': tf.constant(np.array([[center_res[1]]]), dtype=tf.float32),
+        'heading_scores': tf.constant(np.array([[heading_scores]]), dtype=tf.float32),
+        'heading_residuals_normalized': tf.constant(np.array([[heading_residuals_normalized]]), dtype=tf.float32),
+        'size_scores': tf.constant(np.array([[size_scores]]), dtype=tf.float32),
+        'size_residuals_normalized': tf.constant(np.array([[size_residuals_normalized]]), dtype=tf.float32)
+    })
+    N = 1 * 1 # batch * num_point
+    corners_3d = get_box3d_corners_helper(tf.reshape(centers, [N,3]), tf.reshape(angles, [N]), tf.reshape(sizes, [N,3]))
+    with tf.Session() as sess:
+        c, a, s = sess.run([centers, angles, sizes])
+        print(c[0])
+        print(a[0])
+        print(s[0])
+        corners_list = sess.run(corners_3d)
+        print(corners_list)
