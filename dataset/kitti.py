@@ -100,7 +100,7 @@ class Dataset(object):
     def get_gt_box_of_points(self, box_dict):
         '''assign a ground truth box(corners) to each point'''
         boxes = np.zeros((self.npoints,8,3), dtype=np.float32)
-        for i, box in gt_box_of_point:
+        for i, box in box_dict.items():
             boxes[i] = box_dict[i]
         return boxes
 

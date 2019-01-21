@@ -130,20 +130,23 @@ def train():
                 'size_residuals': size_residuals_pl,
                 'gt_box_of_point': gt_box_of_point_pl
             }
-            end_points = MODEL.get_model(pointclouds_pl, mask_labels_pl,
+            end_points = MODEL.get_model(pointclouds_pl, labels_pl,
                 is_training_pl, bn_decay, end_points)
             loss, loss_endpoints = MODEL.get_loss(labels_pl, end_points)
 
             iou2ds, iou3ds = tf.py_func(train_util.compute_box3d_iou, [
-                    tf.reshape(end_points['proposal_boxes'], [BATCH_SIZE*FG_POINT_NUM,8,3]),
-                    tf.reshape(gt_box_of_point_pl, [BATCH_SIZE*FG_POINT_NUM,8,3])
+                    tf.reshape(end_points['proposal_boxes'], [BATCH_SIZE*NUM_FG_POINT,8,3]),
+                    tf.reshape(end_points['gt_box_of_point'], [BATCH_SIZE*NUM_FG_POINT,8,3])
                 ], [tf.float32, tf.float32])
             end_points['iou2ds'] = iou2ds
             end_points['iou3ds'] = iou3ds
 
+            '''
+            # TODO
             eval_recall = tf.py_func(train_util.compute_proposal_recall, [
-                end_points['proposal_boxes'], tf.constant(batch_gt_boxes, dtype=tf.float32)
+                end_points['proposal_boxes'], gt_boxes_pl,
             ], tf.float32)
+            '''
 
             # Get training operator
             learning_rate = get_learning_rate(batch)
@@ -189,7 +192,7 @@ def train():
             'step': batch,
             'merged': merged,
             'loss_endpoints': loss_endpoints,
-            'eval_recall': eval_recall,
+            #'eval_recall': eval_recall,
             'end_points': end_points}
         ops.update(labels_pl)
 
@@ -197,7 +200,8 @@ def train():
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
             # eval iou and recall is slow
-            eval_iou_recall = (epoch % 10 == 0 and epoch != 0)
+            #eval_iou_recall = (epoch % 10 == 0 and epoch != 0)
+            eval_iou_recall = True
             train_one_epoch(sess, ops, train_writer, eval_iou_recall)
             #if epoch % 3 == 0:
             # Save the variables to disk.
@@ -256,16 +260,18 @@ def train_one_epoch(sess, ops, train_writer, more=False):
             ops['is_training_pl']: is_training,
         }
         if more:
-            summary, step, loss_val, _, logits_val, iou2ds, iou3ds, proposal_recall \
+            #summary, step, loss_val, _, logits_val, iou2ds, iou3ds, proposal_recall \
+            summary, step, loss_val, _, logits_val, iou2ds, iou3ds \
             = sess.run([
                 ops['merged'], ops['step'], ops['loss'], ops['train_op'],
-                ops['end_points']['foreground_logits']],
-                ops['end_points']['iou2ds'], ops['end_points']['iou3ds'],
-                ops['eval_recall'], feed_dict=feed_dict)
+                ops['end_points']['foreground_logits'],
+                ops['end_points']['iou2ds'], ops['end_points']['iou3ds']
+                ], feed_dict=feed_dict)
+                #ops['eval_recall'], feed_dict=feed_dict)
             iou2ds_sum += np.sum(iou2ds)
             iou3ds_sum += np.sum(iou3ds)
             # average on each frame
-            total_proposal_recall += proposal_recall * BATCH_SIZE
+            #total_proposal_recall += proposal_recall * BATCH_SIZE
         else:
             summary, step, loss_val, _, logits_val = sess.run([
                 ops['merged'], ops['step'], ops['loss'], ops['train_op'],
@@ -366,16 +372,18 @@ def eval_one_epoch(sess, ops, test_writer, more=False):
             ops['end_points']['foreground_logits']], feed_dict=feed_dict)
 
         if more:
-            summary, step, loss_val, logits_val, iou2ds, iou3ds, proposal_recall \
+            #summary, step, loss_val, logits_val, iou2ds, iou3ds, proposal_recall \
+            summary, step, loss_val, logits_val, iou2ds, iou3ds \
             = sess.run([
                 ops['merged'], ops['step'], ops['loss'],
-                ops['end_points']['foreground_logits']],
-                ops['end_points']['iou2ds'], ops['end_points']['iou3ds'],
-                ops['eval_recall'], feed_dict=feed_dict)
+                ops['end_points']['foreground_logits'],
+                ops['end_points']['iou2ds'], ops['end_points']['iou3ds']],
+                #ops['eval_recall'], feed_dict=feed_dict)
+                feed_dict=feed_dict)
             iou2ds_sum += np.sum(iou2ds)
             iou3ds_sum += np.sum(iou3ds)
             # average on each frame
-            total_proposal_recall += proposal_recall
+            #total_proposal_recall += proposal_recall
         else:
             summary, step, loss_val, logits_val = sess.run([
                 ops['merged'], ops['step'], ops['loss'],

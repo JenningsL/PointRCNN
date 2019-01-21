@@ -109,7 +109,8 @@ def get_region_proposal_net(point_feats, is_training, bn_decay, end_points):
     end_points['proposals'] = output
     return output
 
-def get_model(point_cloud, mask_label, is_training, bn_decay, end_points):
+def get_model(point_cloud, labels_pl, is_training, bn_decay, end_points):
+    mask_label = labels_pl['mask_label']
     end_points = get_segmentation_net(point_cloud, is_training, bn_decay, end_points)
     foreground_logits = tf.cond(is_training, lambda: tf.one_hot(mask_label, 2), lambda: end_points['foreground_logits'])
     # fg_point_feats include xyz
@@ -121,6 +122,9 @@ def get_model(point_cloud, mask_label, is_training, bn_decay, end_points):
     proposals_reshaped = tf.reshape(proposals, [batch_size, NUM_FG_POINT, -1])
     # Parse output to 3D box parameters
     end_points = parse_output_to_tensors(proposals_reshaped, end_points)
+    # for iou eval
+    end_points['gt_box_of_point'] = tf.gather_nd(labels_pl['gt_box_of_point'], end_points['fg_point_indices'])
+    end_points['gt_box_of_point'].set_shape([batch_size, NUM_FG_POINT, 8, 3])
     return end_points
 
 if __name__=='__main__':
