@@ -178,7 +178,7 @@ class Dataset(object):
             for obj in objects:
                 obj.t = [-obj.t[0], obj.t[1], obj.t[2]]
                 obj.ry = np.pi - obj.ry
-        if random_rotate and False:
+        if random_rotate:
             ry = (np.random.random() - 0.5) * math.radians(20) # -10~10 degrees
             pc_rect[:,0:3] = rotate_points_along_y(pc_rect[:,0:3], ry)
             for obj in objects:
@@ -193,12 +193,11 @@ class Dataset(object):
             gt_boxes.append(obj_box_3d)
             obj_idxs = np.where(obj_mask)[0]
             # data augmentation
+            # FIXME: jitter point will make valid loss growing
             if random_shift and False: # jitter object points
-                pc_rect[obj_idxs,:3] = shift_point_cloud(pc_rect[obj_idxs,:3], 0.1)
+                pc_rect[obj_idxs,:3] = shift_point_cloud(pc_rect[obj_idxs,:3], 0.02)
             for idx in obj_idxs:
                 proposal_of_point[idx] = obj_to_proposal_vec(obj, pc_rect[idx,:3])
-        if np.sum(seg_mask==1) == 0:
-            print("empty frame")
         # self.viz_frame(pc_rect, seg_mask, gt_boxes)
         return pc_rect, seg_mask, proposal_of_point, gt_boxes
 
@@ -214,7 +213,7 @@ if __name__ == '__main__':
     while(True):
         batch_data = dataset.get_next_batch(1)
         total += np.sum(batch_data[1] == 1)
-        print('foreground points:', np.sum(batch_data[1] == 1))
+        #print('foreground points:', np.sum(batch_data[1] == 1))
         for d in batch_data[:-1]:
             if np.isnan(np.sum(d)):
                 print(d)
@@ -227,5 +226,3 @@ if __name__ == '__main__':
     dataset.stop_loading()
     print('stop loading')
     produce_thread.join()
-    '''
-    '''

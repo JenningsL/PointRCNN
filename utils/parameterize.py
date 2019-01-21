@@ -68,6 +68,9 @@ def center2class(obj_center, point):
     center = obj_center - point
     bin_x = int((obj_center[0] - point[0] + CENTER_SEARCH_RANGE) / CENTER_BIN_SIZE)
     bin_z = int((obj_center[2] - point[2] + CENTER_SEARCH_RANGE) / CENTER_BIN_SIZE)
+    # limit the bin class label range
+    bin_x = np.clip(bin_x, 0, NUM_CENTER_BIN-1)
+    bin_z = np.clip(bin_z, 0, NUM_CENTER_BIN-1)
     center_cls = np.array([bin_x, bin_z])
     center_res = np.array([
         1/CENTER_BIN_SIZE * (obj_center[0] - point[0] + CENTER_SEARCH_RANGE - (bin_x+0.5)*CENTER_BIN_SIZE),

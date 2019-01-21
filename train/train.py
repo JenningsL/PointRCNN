@@ -301,8 +301,8 @@ def train_one_epoch(sess, ops, train_writer, more=False):
                     (iou2ds_sum / float(NUM_FG_POINT*sample_num), iou3ds_sum / float(NUM_FG_POINT*sample_num)))
                 log_string('proposal recall: %f' % (float(total_proposal_recall) / sample_num))
             if np.isnan(loss_sum):
-                for k,v in ops['loss_endpoints'].items():
-                    print(k, v.eval(session=sess))
+                loss_endpoints = sess.run(ops['loss_endpoints'], feed_dict=feed_dict)
+                print('loss_endpoints: ', loss_endpoints)
             total_correct = 0
             total_seen = 0
             total_tp = 0
