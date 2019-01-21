@@ -42,7 +42,7 @@ TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
 
 def test():
     # data loading threads
-    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val',))
+    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val',False))
     #test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train',))
     test_produce_thread.start()
 
@@ -157,8 +157,8 @@ def test():
         fg_indices.append(indices_val[0])
         proposal_boxes.append(boxes_val[0])
         gt_boxes.append(batch_gt_boxes[0])
-        if is_last_batch:
-        #if num_batches >= 100:
+        #if is_last_batch:
+        if num_batches >= 500:
             break
 
     with open('prediction.pkl','wb') as fp:

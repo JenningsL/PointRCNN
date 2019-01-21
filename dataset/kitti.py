@@ -40,8 +40,10 @@ class Dataset(object):
         self.split = split
         self.kitti_dataset = kitti_object(kitti_path, 'training')
         self.frame_ids = self.load_split_ids(split)
+        random.shuffle(self.frame_ids)
         # self.frame_ids = self.frame_ids[:100]
         self.num_channel = 4
+        self.AUG_X = 1
 
         self.batch_idx = 0
         # preloading
@@ -52,20 +54,21 @@ class Dataset(object):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
             return [line.rstrip('\n') for line in f]
 
-    def load(self, save_path):
+    def load(self, save_path, aug=False):
         i = 0
         while not self.stop:
             frame_id = self.frame_ids[i]
             #print('loading ' + frame_id)
-            frame_data = {}
-            pc, mask, proposal_of_point, gt_boxes = \
-                self.load_frame_data(frame_id, random_flip=True, random_rotate=True, random_shift=True)
-            frame_data['frame_id'] = frame_id
-            frame_data['pointcloud'] = pc
-            frame_data['mask_label'] = mask
-            frame_data['proposal_of_point'] = proposal_of_point
-            frame_data['gt_boxes'] = gt_boxes
-            self.data_buffer.put(frame_data)
+            for x in range(self.AUG_X):
+                frame_data = {}
+                pc, mask, proposal_of_point, gt_boxes = \
+                    self.load_frame_data(frame_id, random_flip=aug, random_rotate=aug, random_shift=aug)
+                frame_data['frame_id'] = frame_id
+                frame_data['pointcloud'] = pc
+                frame_data['mask_label'] = mask
+                frame_data['proposal_of_point'] = proposal_of_point
+                frame_data['gt_boxes'] = gt_boxes
+                self.data_buffer.put(frame_data)
             i = (i + 1) % len(self.frame_ids)
 
     def stop_loading(self):
@@ -94,7 +97,7 @@ class Dataset(object):
 
     def get_next_batch(self, bsize):
         is_last_batch = False
-        total_batch = len(self.frame_ids) / bsize
+        total_batch = len(self.frame_ids)*self.AUG_X / bsize
 
         batch_data = np.zeros((bsize, self.npoints, self.num_channel))
         batch_label = np.zeros((bsize, self.npoints), dtype=np.int32)
@@ -130,6 +133,7 @@ class Dataset(object):
         if self.batch_idx == total_batch - 1:
             is_last_batch = True
             self.batch_idx = 0
+            random.shuffle(self.frame_ids)
         else:
             self.batch_idx += 1
         return batch_data, batch_label, batch_center_x_cls,\
@@ -167,6 +171,7 @@ class Dataset(object):
         pc_rect[:,3] = point_set[:,3]
         seg_mask = np.zeros((pc_rect.shape[0]))
         objects = filter(lambda obj: obj.type in type_whitelist, objects)
+        gt_boxes = []
         # data augmentation
         if random_flip and np.random.random()>0.5: # 50% chance flipping
             pc_rect[:,0] *= -1
@@ -181,20 +186,18 @@ class Dataset(object):
                 obj.ry -= ry
         # point index to proposal vector
         proposal_of_point = {}
-        gt_boxes = []
         for obj in objects:
             _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
             _,obj_mask = extract_pc_in_box3d(pc_rect, obj_box_3d)
             seg_mask[obj_mask] = 1
-            obj_ids = np.where(obj_mask)[0]
-            for idx in obj_ids:
-                proposal_of_point[idx] = obj_to_proposal_vec(obj, pc_rect[idx,:3])
             gt_boxes.append(obj_box_3d)
-        # data augmentation
-        if random_shift: # jitter object points
-            obj_ids = np.where(seg_mask==1)[0]
-            pc_rect[obj_ids,:3] = shift_point_cloud(pc_rect[obj_ids,:3], 0.1)
-
+            obj_idxs = np.where(obj_mask)[0]
+            # data augmentation
+            # FIXME: jitter point will make valid loss growing
+            if random_shift and False: # jitter object points
+                pc_rect[obj_idxs,:3] = shift_point_cloud(pc_rect[obj_idxs,:3], 0.02)
+            for idx in obj_idxs:
+                proposal_of_point[idx] = obj_to_proposal_vec(obj, pc_rect[idx,:3])
         # self.viz_frame(pc_rect, seg_mask, gt_boxes)
         return pc_rect, seg_mask, proposal_of_point, gt_boxes
 
@@ -203,20 +206,23 @@ if __name__ == '__main__':
     split = sys.argv[2]
     dataset = Dataset(16384, kitti_path, split)
 
-    '''
-    produce_thread = threading.Thread(target=dataset.load, args=('./train',))
+    produce_thread = threading.Thread(target=dataset.load, args=('./train',True))
     produce_thread.start()
     i = 0
     total = 0
     while(True):
         batch_data = dataset.get_next_batch(1)
         total += np.sum(batch_data[1] == 1)
-        print('foreground points:', np.sum(batch_data[1] == 1))
-        if i >= 10:
+        #print('foreground points:', np.sum(batch_data[1] == 1))
+        for d in batch_data[:-1]:
+            if np.isnan(np.sum(d)):
+                print(d)
+                break
+        #if i >= 10:
+        if batch_data[-1]:
             break
         i += 1
     print(total/i)
     dataset.stop_loading()
     print('stop loading')
     produce_thread.join()
-    '''
