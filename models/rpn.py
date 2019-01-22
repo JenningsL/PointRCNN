@@ -102,12 +102,15 @@ def reduce_proposals(end_points):
 
     confidence_unpack = tf.unstack(confidence, axis=0)
     boxes_bev_unpack = tf.unstack(boxes_bev, axis=0)
-    boxes_3d_unpack = tf.unstack(end_points['proposal_boxes'], axis=0)
-    boxes_3d_list = []
+    #boxes_3d_unpack = tf.unstack(end_points['proposal_boxes'], axis=0)
+    #boxes_3d_list = []
+    batch_nms_indices = []
     for i in range(len(confidence_unpack)):
         nms_indices = tf.image.non_max_suppression(boxes_bev_unpack[i], confidence_unpack[i], 300)
-        boxes_3d_list.append(tf.gather(boxes_3d_unpack[i], nms_indices))
-    end_points['proposal_boxes_nms'] = tf.stack(boxes_3d_list, axis=0)
+        #boxes_3d_list.append(tf.gather(boxes_3d_unpack[i], nms_indices))
+        nms_indices = tf.pad(nms_indices, [[0, 300-tf.shape(nms_indices)[0]]], mode='CONSTANT', constant_values=-1)
+        batch_nms_indices.append(nms_indices)
+    end_points['nms_indices'] = tf.stack(batch_nms_indices, axis=0)
     return end_points
 
 def get_region_proposal_net(point_feats, is_training, bn_decay, end_points):
@@ -151,7 +154,7 @@ def get_model(point_cloud, labels_pl, is_training, bn_decay, end_points):
     proposals_reshaped = tf.reshape(proposals, [batch_size, NUM_FG_POINT, -1])
     # Parse output to 3D box parameters
     end_points = parse_output_to_tensors(proposals_reshaped, end_points)
-    # end_points = reduce_proposals(end_points)
+    end_points = reduce_proposals(end_points)
     # for iou eval
     end_points['gt_box_of_point'] = tf.gather_nd(labels_pl['gt_box_of_point'], end_points['fg_point_indices'])
     end_points['gt_box_of_point'].set_shape([batch_size, NUM_FG_POINT, 8, 3])
