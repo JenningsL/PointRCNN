@@ -81,6 +81,35 @@ def get_segmentation_net(point_cloud, is_training, bn_decay, end_points):
 
     return end_points
 
+def reduce_proposals(end_points):
+    '''Use NMS to reduce the number of proposals'''
+    batch_size = end_points['fg_points_xyz'].shape[0]
+    # confidence
+    fg_logits = tf.gather_nd(end_points['foreground_logits'], end_points['fg_point_indices']) # (B,M)
+    seg_scores = tf.reduce_max(tf.nn.softmax(fg_logits), axis=-1) # (B,M)
+    bin_x_scores = tf.reduce_max(tf.nn.softmax(end_points['center_x_scores']), axis=-1) # (B,M)
+    bin_z_scores = tf.reduce_max(tf.nn.softmax(end_points['center_z_scores']), axis=-1) # (B,M)
+    heading_scores = tf.reduce_max(tf.nn.softmax(end_points['heading_scores']), axis=-1) # (B,M)
+    size_scores = tf.reduce_max(tf.nn.softmax(end_points['size_scores']), axis=-1) # (B,M)
+    confidence = seg_scores + bin_x_scores + bin_z_scores + heading_scores + size_scores
+    confidence.set_shape([batch_size, NUM_FG_POINT])
+    # BEV boxes
+    boxes_3d = end_points['proposal_boxes'] # (B,M,8,3)
+    corners_min = tf.gather(tf.reduce_min(boxes_3d, axis=2), [0,2], axis=-1)
+    corners_max = tf.gather(tf.reduce_max(boxes_3d, axis=2), [0,2], axis=-1) # (B,M,2) x,z
+    boxes_bev = tf.concat([corners_min, corners_max], axis=-1) # (B,M,4)
+    boxes_bev.set_shape([batch_size, NUM_FG_POINT,4])
+
+    confidence_unpack = tf.unstack(confidence, axis=0)
+    boxes_bev_unpack = tf.unstack(boxes_bev, axis=0)
+    boxes_3d_unpack = tf.unstack(end_points['proposal_boxes'], axis=0)
+    boxes_3d_list = []
+    for i in range(len(confidence_unpack)):
+        nms_indices = tf.image.non_max_suppression(boxes_bev_unpack[i], confidence_unpack[i], 300)
+        boxes_3d_list.append(tf.gather(boxes_3d_unpack[i], nms_indices))
+    end_points['proposal_boxes_nms'] = tf.stack(boxes_3d_list, axis=0)
+    return end_points
+
 def get_region_proposal_net(point_feats, is_training, bn_decay, end_points):
     batch_size = point_feats.get_shape()[0].value
     npoints = point_feats.get_shape()[1].value
@@ -122,6 +151,7 @@ def get_model(point_cloud, labels_pl, is_training, bn_decay, end_points):
     proposals_reshaped = tf.reshape(proposals, [batch_size, NUM_FG_POINT, -1])
     # Parse output to 3D box parameters
     end_points = parse_output_to_tensors(proposals_reshaped, end_points)
+    # end_points = reduce_proposals(end_points)
     # for iou eval
     end_points['gt_box_of_point'] = tf.gather_nd(labels_pl['gt_box_of_point'], end_points['fg_point_indices'])
     end_points['gt_box_of_point'].set_shape([batch_size, NUM_FG_POINT, 8, 3])
@@ -131,7 +161,9 @@ if __name__=='__main__':
     with tf.Graph().as_default():
         inputs = tf.zeros((32,16384,4))
         mask_label = tf.zeros((32,16384), dtype=tf.int32)
-        outputs = get_model(inputs, mask_label, tf.constant(True), None, {})
+        gt_box_of_point = tf.zeros((32,16384,8,3), dtype=tf.float32)
+        labels_pl = {'mask_label': mask_label, 'gt_box_of_point': gt_box_of_point}
+        outputs = get_model(inputs, labels_pl, tf.constant(True), None, {})
         for key in outputs:
             print((key, outputs[key]))
         # loss = get_loss(tf.zeros((32,),dtype=tf.int32),
