@@ -52,7 +52,7 @@ def test():
             center_bin_x_pl, center_bin_z_pl,\
             center_x_residuals_pl, center_z_residuals_pl, center_y_residuals_pl, heading_bin_pl,\
             heading_residuals_pl, size_class_pl, size_residuals_pl, \
-            gt_box_of_point_pl \
+            gt_boxes_pl, gt_box_of_point_pl \
                 = MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
 
             is_training_pl = tf.placeholder(tf.bool, shape=())
