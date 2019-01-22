@@ -51,7 +51,8 @@ def test():
             pointclouds_pl, mask_labels_pl, \
             center_bin_x_pl, center_bin_z_pl,\
             center_x_residuals_pl, center_z_residuals_pl, center_y_residuals_pl, heading_bin_pl,\
-            heading_residuals_pl, size_class_pl, size_residuals_pl \
+            heading_residuals_pl, size_class_pl, size_residuals_pl, \
+            gt_box_of_point_pl \
                 = MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
 
             is_training_pl = tf.placeholder(tf.bool, shape=())
@@ -74,9 +75,10 @@ def test():
                 'heading_bin': heading_bin_pl,
                 'heading_residuals': heading_residuals_pl,
                 'size_class': size_class_pl,
+                'gt_box_of_point': gt_box_of_point_pl,
                 'size_residuals': size_residuals_pl
             }
-            end_points = MODEL.get_model(pointclouds_pl, mask_labels_pl,
+            end_points = MODEL.get_model(pointclouds_pl, labels_pl,
                 is_training_pl, None, end_points)
             saver = tf.train.Saver()
 
@@ -118,7 +120,7 @@ def test():
         batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
         batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
         batch_heading_residuals, batch_size_class, batch_size_residuals, batch_gt_boxes, \
-        is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
+        batch_gt_box_of_point, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {
             ops['pointclouds_pl']: batch_pc,
@@ -132,6 +134,7 @@ def test():
             ops['heading_residuals']: batch_heading_residuals,
             ops['size_class']: batch_size_class,
             ops['size_residuals']: batch_size_residuals,
+            ops['gt_box_of_point']: batch_gt_box_of_point,
             ops['is_training_pl']: is_training,
         }
 
@@ -155,10 +158,10 @@ def test():
         labels.append(batch_mask_label[0])
         fg_points.append(points_val[0])
         fg_indices.append(indices_val[0])
-        proposal_boxes.append(boxes_val[0])
+        proposal_boxes.append(boxes_val)
         gt_boxes.append(batch_gt_boxes[0])
-        #if is_last_batch:
-        if num_batches >= 500:
+        if is_last_batch:
+        #if num_batches >= 500:
             break
 
     with open('prediction.pkl','wb') as fp:

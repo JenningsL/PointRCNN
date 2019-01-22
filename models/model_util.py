@@ -262,7 +262,7 @@ def parse_output_to_tensors(output, end_points):
     box_num = batch_size * npoints
     corners_3d = get_box3d_corners_helper(
         tf.reshape(box_center, [box_num,3]), tf.reshape(box_angle, [box_num]), tf.reshape(box_size, [box_num,3]))
-    end_points['proposal_boxes'] = corners_3d
+    end_points['proposal_boxes'] = tf.reshape(corners_3d, [batch_size, npoints, 8, 3])
     return end_points
 
 # --------------------------------------
@@ -289,10 +289,11 @@ def placeholder_inputs(batch_size, num_point):
     heading_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point))
     size_class_labels = tf.placeholder(tf.int32, shape=(batch_size, num_point))
     size_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, num_point, 3))
+    gt_boxes = tf.placeholder(tf.float32, shape=(batch_size, None, 8, 3))
     gt_box_of_point = tf.placeholder(tf.float32, shape=(batch_size, num_point, 8, 3))
     return pointclouds_pl, seg_labels_pl, center_bin_x_labels, center_bin_z_labels,\
         center_x_residuals_labels, center_z_residuals_labels, center_y_residuals_labels, heading_bin_labels,\
-        heading_residuals_labels, size_class_labels, size_residuals_labels, gt_box_of_point
+        heading_residuals_labels, size_class_labels, size_residuals_labels, gt_boxes, gt_box_of_point
 
 
 def point_cloud_masking(point_cloud, logits, end_points, xyz_only=True):
@@ -490,6 +491,8 @@ def get_loss(labels, end_points):
     return total_loss, loss_endpoints
 
 if __name__ == '__main__':
+    placeholder_inputs(32, 1024)
+    sys.exit()
     import math
     from parameterize import obj_to_proposal_vec, CENTER_BIN_SIZE
     class Box(object):
