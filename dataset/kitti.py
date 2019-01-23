@@ -109,10 +109,11 @@ class Dataset(object):
             boxes[i] = box_dict[i]
         return boxes
 
-    def get_next_batch(self, bsize):
+    def get_next_batch(self, bsize, need_id=False):
         is_last_batch = False
         total_batch = len(self.frame_ids)*self.AUG_X / bsize
 
+        batch_ids = []
         batch_data = np.zeros((bsize, self.npoints, self.num_channel))
         batch_label = np.zeros((bsize, self.npoints), dtype=np.int32)
         # proposal output for each point
@@ -130,6 +131,7 @@ class Dataset(object):
         batch_gt_boxes = []
         for i in range(bsize):
             frame = self.data_buffer.get()
+            batch_ids.append(frame['frame_id'])
             objectness, center_cls, center_res, angle_cls, angle_res, size_cls, size_res = \
                 frame['proposal_of_point']
             batch_data[i,...] = frame['pointcloud']
@@ -152,6 +154,11 @@ class Dataset(object):
             random.shuffle(self.frame_ids)
         else:
             self.batch_idx += 1
+        if need_id:
+            return batch_data, batch_label, batch_center_x_cls,\
+                batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
+                batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
+                batch_size_res, batch_gt_boxes, batch_gt_box_of_point, batch_ids, is_last_batch
         return batch_data, batch_label, batch_center_x_cls,\
             batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
             batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
@@ -205,6 +212,10 @@ class Dataset(object):
         for obj in objects:
             _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
             _,obj_mask = extract_pc_in_box3d(pc_rect, obj_box_3d)
+            if np.sum(obj_mask) == 0:
+                # label without 3d points
+                print('skip object without points')
+                continue
             seg_mask[obj_mask] = 1
             gt_boxes.append(obj_box_3d)
             obj_idxs = np.where(obj_mask)[0]
@@ -222,20 +233,21 @@ if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
     dataset = Dataset(16384, kitti_path, split, types=['Car'], difficulties=[1])
-    # dataset.load('./train', True)
+    dataset.load('./train', True)
     # produce_thread = threading.Thread(target=dataset.load, args=('./train',True))
-    produce_thread.start()
-    i = 0
-    total = 0
-    while(True):
-        batch_data = dataset.get_next_batch(1)
-        total += np.sum(batch_data[1] == 1)
-        print('foreground points:', np.sum(batch_data[1] == 1))
-        if i >= 10:
-        # if batch_data[-1]:
-            break
-        i += 1
-    print(total/i)
-    dataset.stop_loading()
-    print('stop loading')
-    produce_thread.join()
+    # produce_thread.start()
+    # i = 0
+    # total = 0
+    # while(True):
+    #     batch_data = dataset.get_next_batch(1, need_id=True)
+    #     total += np.sum(batch_data[1] == 1)
+    #     print('foreground points:', np.sum(batch_data[1] == 1))
+    #     print(batch_data[-2])
+    #     if i >= 10:
+    #     # if batch_data[-1]:
+    #         break
+    #     i += 1
+    # print(total/i)
+    # dataset.stop_loading()
+    # print('stop loading')
+    # produce_thread.join()

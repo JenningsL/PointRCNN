@@ -105,6 +105,7 @@ def test():
     total_seen = 0
     num_batches = 0
 
+    frame_ids = []
     pointclouds = []
     preds = []
     labels = []
@@ -119,7 +120,8 @@ def test():
         batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
         batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
         batch_heading_residuals, batch_size_class, batch_size_residuals, batch_gt_boxes, \
-        batch_gt_box_of_point, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
+        batch_gt_box_of_point, batch_ids, is_last_batch \
+        = TEST_DATASET.get_next_batch(BATCH_SIZE, need_id=True)
 
         feed_dict = {
             ops['pointclouds_pl']: batch_pc,
@@ -148,6 +150,7 @@ def test():
         num_batches += 1
         # results
         for i in range(BATCH_SIZE):
+            frame_ids.append(batch_ids[i])
             pointclouds.append(batch_pc[i])
             preds.append(preds_val[i])
             labels.append(batch_mask_label[i])
@@ -161,6 +164,7 @@ def test():
             break
 
     with open('prediction.pkl','wb') as fp:
+        pickle.dump(frame_ids, fp)
         pickle.dump(proposal_boxes, fp)
         pickle.dump(gt_boxes, fp)
         pickle.dump(nms_indices, fp)
