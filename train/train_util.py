@@ -21,11 +21,12 @@ def compute_box3d_iou(pred_boxes, gt_boxes, nms_indices):
     All inputs are numpy arrays.
 
     Inputs:
-        pred_boxes,
-        gt_boxes
+        pred_boxes: (B,FG_POINT_NUM,8,3)
+        gt_boxes: (B,FG_POINT_NUM,8,3)
+        nms_indices: (B,FG_POINT_NUM) valid indices are those != -1
     Output:
-        iou2ds: (B,) birdeye view oriented 2d box ious
-        iou3ds: (B,) 3d box ious
+        iou2ds: (B*M,) birdeye view oriented 2d box ious
+        iou3ds: (B*M,) 3d box ious
     '''
     iou2d_list = []
     iou3d_list = []
@@ -41,8 +42,12 @@ def compute_box3d_iou(pred_boxes, gt_boxes, nms_indices):
 
 def compute_proposal_recall(batch_pred_boxes, batch_gt_boxes, nms_indices, iou_threshold=0.5):
     '''
-    batch_pred_boxes: (B,FG_POINT_NUM,8,3)
-    batch_gt_boxes: (B,?,8,3)
+    Inputs:
+        batch_pred_boxes: (B,FG_POINT_NUM,8,3)
+        batch_gt_boxes: (B,?,8,3)
+        nms_indices: (B,FG_POINT_NUM) valid indices are those != -1
+    Outputs:
+        Average recall of every sample: float
     '''
     total_recall = 0
     total_labels = 0

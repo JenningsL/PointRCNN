@@ -37,13 +37,11 @@ MODEL_FILE = os.path.join(ROOT_DIR, 'models', FLAGS.model+'.py')
 def log_string(out_str):
     print(out_str)
 
-TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
-#TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train')
+TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', types=['Car'], difficulties=[1])
 
 def test():
     # data loading threads
     test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val',False))
-    #test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train',))
     test_produce_thread.start()
 
     with tf.Graph().as_default():
@@ -114,6 +112,7 @@ def test():
     fg_indices = []
     proposal_boxes = []
     gt_boxes = []
+    nms_indices = []
 
     while(True):
         batch_pc, batch_mask_label, \
@@ -139,58 +138,39 @@ def test():
         }
 
         start = datetime.now()
-        logits_val, points_val, indices_val, boxes_val = sess.run([
+        logits_val, points_val, indices_val, boxes_val, ind_val = sess.run([
             ops['end_points']['foreground_logits'], ops['end_points']['fg_points'],
-            ops['end_points']['fg_point_indices'], ops['end_points']['proposal_boxes']], feed_dict=feed_dict)
+            ops['end_points']['fg_point_indices'], ops['end_points']['proposal_boxes'],
+            ops['end_points']['nms_indices']], feed_dict=feed_dict)
         print('inference time: ', datetime.now() - start)
-        '''
-        print(logits_val.shape)
-        print(points_val.shape)
-        print(indices_val.shape)
-        print(boxes_val.shape)
-        '''
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
         num_batches += 1
         # results
-        pointclouds.append(batch_pc[0])
-        preds.append(preds_val[0])
-        labels.append(batch_mask_label[0])
-        fg_points.append(points_val[0])
-        fg_indices.append(indices_val[0])
-        proposal_boxes.append(boxes_val)
-        gt_boxes.append(batch_gt_boxes[0])
+        for i in range(BATCH_SIZE):
+            pointclouds.append(batch_pc[i])
+            preds.append(preds_val[i])
+            labels.append(batch_mask_label[i])
+            fg_points.append(points_val[i])
+            fg_indices.append(indices_val[i])
+            proposal_boxes.append(boxes_val[i])
+            gt_boxes.append(batch_gt_boxes[i])
+            nms_indices.append(ind_val[i])
         if is_last_batch:
         #if num_batches >= 500:
             break
 
     with open('prediction.pkl','wb') as fp:
-        #pickle.dump(pointclouds, fp)
-        #pickle.dump(preds, fp)
-        #pickle.dump(labels, fp)
-        #pickle.dump(fg_points, fp)
-        #pickle.dump(fg_indices, fp)
         pickle.dump(proposal_boxes, fp)
         pickle.dump(gt_boxes, fp)
+        pickle.dump(nms_indices, fp)
     log_string('saved prediction')
     TEST_DATASET.stop_loading()
     test_produce_thread.join()
 
-    cal_recall(proposal_boxes, gt_boxes)
-
-
-def cal_recall(proposal_boxes, gt_boxes):
-    rec = 0
-    total = 0
-    for i in range(len(proposal_boxes)):
-        if len(gt_boxes[i]) == 0:
-            continue
-        total += 1
-        recall = compute_proposal_recall([proposal_boxes[i]], [gt_boxes[i]])
-        rec += recall
-    print('Average recall: ', float(rec)/total)
+    recall = compute_proposal_recall(proposal_boxes, gt_boxes, nms_indices)
+    print('Average recall: ', recall)
 
 if __name__ == "__main__":
     log_string('pid: %s'%(str(os.getpid())))
     test()
-

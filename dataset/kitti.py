@@ -20,6 +20,7 @@ from parameterize import obj_to_proposal_vec
 import kitti_util as utils
 from data_util import rotate_points_along_y, shift_point_cloud
 type_whitelist = ['Car', 'Pedestrian', 'Cyclist']
+difficulties_whitelist = [0, 1, 2]
 
 def in_hull(p, hull):
     from scipy.spatial import Delaunay
@@ -33,7 +34,8 @@ def extract_pc_in_box3d(pc, box3d):
     return pc[box3d_roi_inds,:], box3d_roi_inds
 
 class Dataset(object):
-    def __init__(self, npoints, kitti_path, split):
+    def __init__(self, npoints, kitti_path, split, \
+        types=type_whitelist, difficulties=difficulties_whitelist):
         self.npoints = npoints
         self.kitti_path = kitti_path
         #self.batch_size = batch_size
@@ -44,6 +46,9 @@ class Dataset(object):
         # self.frame_ids = self.frame_ids[:100]
         self.num_channel = 4
         self.AUG_X = 1
+
+        self.types_list = types
+        self.difficulties_list = difficulties
 
         self.batch_idx = 0
         # preloading
@@ -181,7 +186,7 @@ class Dataset(object):
         pc_rect[:,0:3] = calib.project_velo_to_rect(point_set[:,0:3])
         pc_rect[:,3] = point_set[:,3]
         seg_mask = np.zeros((pc_rect.shape[0]))
-        objects = filter(lambda obj: obj.type in type_whitelist, objects)
+        objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
         gt_boxes = [] # ground truth boxes
         # data augmentation
         if random_flip and np.random.random()>0.5: # 50% chance flipping
@@ -216,22 +221,18 @@ class Dataset(object):
 if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
-    dataset = Dataset(16384, kitti_path, split)
-
-    produce_thread = threading.Thread(target=dataset.load, args=('./train',True))
+    dataset = Dataset(16384, kitti_path, split, types=['Car'], difficulties=[1])
+    # dataset.load('./train', True)
+    # produce_thread = threading.Thread(target=dataset.load, args=('./train',True))
     produce_thread.start()
     i = 0
     total = 0
     while(True):
         batch_data = dataset.get_next_batch(1)
         total += np.sum(batch_data[1] == 1)
-        #print('foreground points:', np.sum(batch_data[1] == 1))
-        for d in batch_data[:-1]:
-            if np.isnan(np.sum(d)):
-                print(d)
-                break
-        #if i >= 10:
-        if batch_data[-1]:
+        print('foreground points:', np.sum(batch_data[1] == 1))
+        if i >= 10:
+        # if batch_data[-1]:
             break
         i += 1
     print(total/i)
