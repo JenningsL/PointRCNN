@@ -18,20 +18,8 @@ sys.path.append(os.path.join(ROOT_DIR, 'visualize/mayavi'))
 from kitti_object import *
 from parameterize import obj_to_proposal_vec
 import kitti_util as utils
-from data_util import rotate_points_along_y, shift_point_cloud
-type_whitelist = ['Car', 'Pedestrian', 'Cyclist']
-difficulties_whitelist = [0, 1, 2]
-
-def in_hull(p, hull):
-    from scipy.spatial import Delaunay
-    if not isinstance(hull,Delaunay):
-        hull = Delaunay(hull)
-    return hull.find_simplex(p)>=0
-
-def extract_pc_in_box3d(pc, box3d):
-    ''' pc: (N,3), box3d: (8,3) '''
-    box3d_roi_inds = in_hull(pc[:,0:3], box3d)
-    return pc[box3d_roi_inds,:], box3d_roi_inds
+from data_util import rotate_points_along_y, shift_point_cloud, extract_pc_in_box3d
+from data_conf import type_whitelist, difficulties_whitelist
 
 class Dataset(object):
     def __init__(self, npoints, kitti_path, split, \
@@ -214,7 +202,7 @@ class Dataset(object):
             _,obj_mask = extract_pc_in_box3d(pc_rect, obj_box_3d)
             if np.sum(obj_mask) == 0:
                 # label without 3d points
-                print('skip object without points')
+                # print('skip object without points')
                 continue
             seg_mask[obj_mask] = 1
             gt_boxes.append(obj_box_3d)

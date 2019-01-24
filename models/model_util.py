@@ -423,7 +423,7 @@ def get_loss(labels, end_points):
     center_z_residuals_dist = tf.norm(labels_fg['center_z_residuals'] - center_z_residuals_normalized, axis=-1)
     center_z_res_loss = huber_loss(center_z_residuals_dist, delta=1.0)
     # y is directly regressed
-    center_y_residuals_dist = tf.norm(labels_fg['center_y_residuals'] - tf.squeeze(end_points['center_y_residuals']), axis=-1)
+    center_y_residuals_dist = tf.norm(labels_fg['center_y_residuals'] - tf.gather(end_points['center_y_residuals'], 0, axis=-1), axis=-1)
     center_y_res_loss = huber_loss(center_y_residuals_dist, delta=1.0)
     tf.summary.scalar('center_x  class loss', center_x_cls_loss)
     tf.summary.scalar('center_z  class loss', center_z_cls_loss)
@@ -491,8 +491,6 @@ def get_loss(labels, end_points):
     return total_loss, loss_endpoints
 
 if __name__ == '__main__':
-    placeholder_inputs(32, 1024)
-    sys.exit()
     import math
     from parameterize import obj_to_proposal_vec, CENTER_BIN_SIZE
     class Box(object):
@@ -503,7 +501,7 @@ if __name__ == '__main__':
     obj.l = 1
     obj.w = 0.6
     obj.h = 0.7
-    point = np.array([-27.1,1.3,4.3])
+    point = np.array([-27.1,0.9,4.3])
     center_cls, center_res, angle_cls,angle_res, size_cls, size_res = obj_to_proposal_vec(obj, point)
     angle_res /= (2*np.pi/float(NUM_HEADING_BIN))
     size_res /= type_mean_size[size_cls]

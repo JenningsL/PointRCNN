@@ -5,6 +5,7 @@ CENTER_SEARCH_RANGE = 3.0 # in meters
 NUM_CENTER_BIN = 12
 CENTER_BIN_SIZE = CENTER_SEARCH_RANGE * 2 / NUM_CENTER_BIN # in one direction
 NUM_HEADING_BIN = 12
+NUM_OBJ_CLASSES = 4
 
 # Car, Pedestrian, Cyclist
 type_mean_size = np.array([[3.88311640418,1.62856739989,1.52563191462],
