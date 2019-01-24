@@ -180,12 +180,10 @@ class Dataset(object):
             calib, 0, 0, img_width, img_height, True)
         pc_velo = pc_velo[img_fov_inds, :]
         #print(data_idx_str, pc_velo.shape[0])
-        choice = np.random.choice(pc_velo.shape[0], self.npoints, replace=True)
-        point_set = pc_velo[choice, :]
+        point_set = pc_velo
         pc_rect = np.zeros_like(point_set)
         pc_rect[:,0:3] = calib.project_velo_to_rect(point_set[:,0:3])
         pc_rect[:,3] = point_set[:,3]
-        seg_mask = np.zeros((pc_rect.shape[0]))
         objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
         gt_boxes = [] # ground truth boxes
         gt_boxes_xy = []

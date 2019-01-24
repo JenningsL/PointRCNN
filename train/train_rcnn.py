@@ -112,7 +112,7 @@ def train():
 
             iou2ds, iou3ds = tf.py_func(train_util.compute_box3d_iou, [
                     tf.expand_dims(end_points['output_boxes'], 1),
-                    tf.expand_dims(placeholders['gt_box_of_point'], 1),
+                    tf.expand_dims(placeholders['gt_box_of_prop'], 1),
                     tf.expand_dims(tf.to_float(tf.equal(placeholders['class_labels'], 0))*-1, 1)
                 ], [tf.float32, tf.float32])
 
@@ -220,7 +220,7 @@ def train_one_epoch(sess, ops, pls, train_writer):
         summary, step, loss_val, _, iou2ds, iou3ds, output_boxes \
         = sess.run([
             ops['merged'], ops['step'], ops['loss'], ops['train_op'],
-            ops['end_points']['iou2ds'], ops['end_points']['iou3ds'],
+            ops['iou2ds'], ops['iou3ds'],
             ops['end_points']['output_boxes']], feed_dict=feed_dict)
         iou2ds_sum += np.sum(iou2ds)
         iou3ds_sum += np.sum(iou3ds)

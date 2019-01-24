@@ -9,7 +9,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 import tf_util
 from pointnet_util import pointnet_sa_module, pointnet_sa_module_msg, pointnet_fp_module
 from parameterize import NUM_HEADING_BIN, NUM_SIZE_CLUSTER, NUM_CENTER_BIN, NUM_OBJ_CLASSES, type_mean_size
-from model_util import huber_loss
+from model_util import huber_loss, get_3d_box_from_output, get_box3d_corners_helper
 
 class RCNN(object):
     def __init__(self, batch_size, num_point, num_channel=133, bn_decay=None):
