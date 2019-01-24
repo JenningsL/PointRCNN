@@ -108,12 +108,12 @@ def train():
 
             # Get model and losses
             end_points = rcnn_model.end_points
-            loss = rcnn_model.get_loss()
+            loss, loss_endpoints = rcnn_model.get_loss()
 
             iou2ds, iou3ds = tf.py_func(train_util.compute_box3d_iou, [
                     tf.expand_dims(end_points['output_boxes'], 1),
                     tf.expand_dims(placeholders['gt_box_of_prop'], 1),
-                    tf.expand_dims(tf.to_float(tf.equal(placeholders['class_labels'], 0))*-1, 1)
+                    tf.expand_dims(tf.to_int32(tf.equal(placeholders['class_labels'], 0))*tf.constant(-1), 1)
                 ], [tf.float32, tf.float32])
 
             # Get training operator
@@ -159,6 +159,7 @@ def train():
             'merged': merged,
             'iou2ds': iou2ds,
             'iou3ds': iou3ds,
+            'loss_endpoints': loss_endpoints,
             'end_points': end_points}
 
         for epoch in range(MAX_EPOCH):
@@ -217,10 +218,10 @@ def train_one_epoch(sess, ops, pls, train_writer):
             pls['is_training_pl']: is_training
         }
 
-        summary, step, loss_val, _, iou2ds, iou3ds, output_boxes \
+        summary, step, loss_val, _, iou2ds, iou3ds, logits_val, output_boxes \
         = sess.run([
             ops['merged'], ops['step'], ops['loss'], ops['train_op'],
-            ops['iou2ds'], ops['iou3ds'],
+            ops['iou2ds'], ops['iou3ds'], ops['end_points']['cls_logits'],
             ops['end_points']['output_boxes']], feed_dict=feed_dict)
         iou2ds_sum += np.sum(iou2ds)
         iou3ds_sum += np.sum(iou3ds)
@@ -229,19 +230,23 @@ def train_one_epoch(sess, ops, pls, train_writer):
         # proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes, nms_indices)
         # total_proposal_recall += proposal_recall * BATCH_SIZE
 
+        if np.isnan(loss_val):
+            loss_endpoints = sess.run(ops['loss_endpoints'], feed_dict=feed_dict)
+            print('loss_endpoints: ', loss_endpoints)
+
         train_writer.add_summary(summary, step)
 
         # segmentation acc
-        preds_val = np.argmax(logits_val, 2)
-        correct = np.sum(preds_val == batch_mask_label)
-        tp = np.sum(np.logical_and(preds_val == batch_mask_label, batch_mask_label == 1))
-        fp = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 0))
-        fn = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 1))
+        preds_val = np.argmax(logits_val, axis=-1)
+        correct = np.sum(preds_val == batch_cls_label)
+        tp = np.sum(np.logical_and(preds_val == batch_cls_label, batch_cls_label > 0))
+        fp = np.sum(np.logical_and(preds_val != batch_cls_label, batch_cls_label == 0))
+        fn = np.sum(np.logical_and(preds_val != batch_cls_label, batch_cls_label > 0))
         total_correct += correct
         total_tp += tp
         total_fp += fp
         total_fn += fn
-        total_seen += NUM_POINT * BATCH_SIZE
+        total_seen += BATCH_SIZE
         loss_sum += loss_val
 
         if (batch_idx+1)%10 == 0:
@@ -259,9 +264,6 @@ def train_one_epoch(sess, ops, pls, train_writer):
             log_string('box IoU (ground/3D): %f / %f' % \
                 (iou2ds_sum / float(total_nms), iou3ds_sum / float(total_nms)))
             log_string('proposal recall: %f' % (float(total_proposal_recall) / sample_num))
-            if np.isnan(loss_sum):
-                loss_endpoints = sess.run(ops['loss_endpoints'], feed_dict=feed_dict)
-                print('loss_endpoints: ', loss_endpoints)
             total_correct = 0
             total_seen = 0
             total_tp = 0

@@ -207,6 +207,8 @@ class Dataset(object):
                 sample = self.get_sample(pc_rect, calib, prop, objects[gt_idx])
                 if sample:
                     positive_samples.append(sample)
+        #print('positive:', len(positive_samples))
+        #print('negative:', len(negative_samples))
         random.shuffle(negative_samples)
         samples = positive_samples + negative_samples[:len(positive_samples)]
         random.shuffle(samples)
