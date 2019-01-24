@@ -18,6 +18,8 @@ from rcnn_dataset import Dataset
 import train_util
 from rcnn import RCNN
 
+NUM_CHANNEL = 4
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
 parser.add_argument('--model', default='frustum_pointnets_v1', help='Model name [default: frustum_pointnets_v1]')
@@ -85,15 +87,12 @@ def get_bn_decay(batch):
     return bn_decay
 
 TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train')
-TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
 
 def train():
     ''' Main function for training and simple evaluation. '''
     # data loading threads
     train_produce_thread = Thread(target=TRAIN_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train', True))
     train_produce_thread.start()
-    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val', False))
-    test_produce_thread.start()
 
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
@@ -111,13 +110,11 @@ def train():
             end_points = rcnn_model.end_points
             loss = rcnn_model.get_loss()
 
-            # iou2ds, iou3ds = tf.py_func(train_util.compute_box3d_iou, [
-            #         end_points['proposal_boxes'],
-            #         end_points['gt_box_of_point'],
-            #         end_points['nms_indices']
-            #     ], [tf.float32, tf.float32])
-            # end_points['iou2ds'] = iou2ds
-            # end_points['iou3ds'] = iou3ds
+            iou2ds, iou3ds = tf.py_func(train_util.compute_box3d_iou, [
+                    tf.expand_dims(end_points['output_boxes'], 1),
+                    tf.expand_dims(placeholders['gt_box_of_point'], 1),
+                    tf.expand_dims(tf.to_float(tf.equal(placeholders['class_labels'], 0))*-1, 1)
+                ], [tf.float32, tf.float32])
 
             # Get training operator
             learning_rate = get_learning_rate(batch)
@@ -160,6 +157,8 @@ def train():
             'train_op': train_op,
             'step': batch,
             'merged': merged,
+            'iou2ds': iou2ds,
+            'iou3ds': iou3ds,
             'end_points': end_points}
 
         for epoch in range(MAX_EPOCH):
@@ -168,17 +167,15 @@ def train():
             # eval iou and recall is slow
             #eval_iou_recall = (epoch % 10 == 0 and epoch != 0)
             eval_iou_recall = True
-            train_one_epoch(sess, ops, placeholders, train_writer, eval_iou_recall)
+            train_one_epoch(sess, ops, placeholders, train_writer)
             save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
             log_string("Model saved in file: {0}".format(save_path))
             # val_loss = eval_one_epoch(sess, ops, test_writer, eval_iou_recall)
     TRAIN_DATASET.stop_loading()
-    TEST_DATASET.stop_loading()
     train_produce_thread.join()
-    test_produce_thread.join()
 
 
-def train_one_epoch(sess, ops, pls, train_writer, more=False):
+def train_one_epoch(sess, ops, pls, train_writer):
     is_training = True
     log_string(str(datetime.now()))
 
@@ -197,16 +194,15 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
     # Training with batches
     batch_idx = 0
     while(True):
-        batch_pc, batch_cls_label, \
+        batch_pc, batch_cls_label, batch_prop_centers, \
         batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
         batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
-        batch_heading_residuals, batch_size_class, batch_size_residuals, batch_gt_boxes, \
-        is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
-
-
+        batch_heading_residuals, batch_size_class, batch_size_residuals, \
+        batch_gt_box_of_prop, is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {
             pls['pointclouds']: batch_pc,
+            pls['proposal_centers']: batch_prop_centers,
             pls['class_labels']: batch_cls_label,
             pls['center_bin_x_labels']: batch_center_bin_x,
             pls['center_bin_z_labels']: batch_center_bin_z,
@@ -217,20 +213,21 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
             pls['heading_res_labels']: batch_heading_residuals,
             pls['size_class_labels']: batch_size_class,
             pls['size_res_labels']: batch_size_residuals,
+            pls['gt_box_of_prop']: batch_gt_box_of_prop,
             pls['is_training_pl']: is_training
         }
 
-        summary, step, loss_val, _, iou2ds, iou3ds, proposal_boxes, nms_indices \
+        summary, step, loss_val, _, iou2ds, iou3ds, output_boxes \
         = sess.run([
             ops['merged'], ops['step'], ops['loss'], ops['train_op'],
             ops['end_points']['iou2ds'], ops['end_points']['iou3ds'],
-            ops['end_points']['boxes_output']], feed_dict=feed_dict)
+            ops['end_points']['output_boxes']], feed_dict=feed_dict)
         iou2ds_sum += np.sum(iou2ds)
         iou3ds_sum += np.sum(iou3ds)
         total_nms += len(iou2ds)
         # average on each frame
-        proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes, nms_indices)
-        total_proposal_recall += proposal_recall * BATCH_SIZE
+        # proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes, nms_indices)
+        # total_proposal_recall += proposal_recall * BATCH_SIZE
 
         train_writer.add_summary(summary, step)
 
@@ -259,10 +256,9 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
                     (float(total_tp)/(total_tp+total_fn)))
                 log_string('segmentation precision: %f'% \
                     (float(total_tp)/(total_tp+total_fp)))
-            if more:
-                log_string('box IoU (ground/3D): %f / %f' % \
-                    (iou2ds_sum / float(total_nms), iou3ds_sum / float(total_nms)))
-                log_string('proposal recall: %f' % (float(total_proposal_recall) / sample_num))
+            log_string('box IoU (ground/3D): %f / %f' % \
+                (iou2ds_sum / float(total_nms), iou3ds_sum / float(total_nms)))
+            log_string('proposal recall: %f' % (float(total_proposal_recall) / sample_num))
             if np.isnan(loss_sum):
                 loss_endpoints = sess.run(ops['loss_endpoints'], feed_dict=feed_dict)
                 print('loss_endpoints: ', loss_endpoints)

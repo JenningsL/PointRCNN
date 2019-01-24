@@ -27,6 +27,7 @@ class RCNN(object):
         num_channel = self.num_channel
         pointclouds_pl = tf.placeholder(tf.float32,
             shape=(batch_size, num_point, num_channel))
+        proposal_centers_pl = tf.placeholder(tf.float32, shape=(batch_size, 3))
         class_labels_pl = tf.placeholder(tf.int32, shape=(batch_size,))
         center_bin_x_labels = tf.placeholder(tf.int32, shape=(batch_size,))
         center_bin_z_labels = tf.placeholder(tf.int32, shape=(batch_size,))
@@ -37,9 +38,11 @@ class RCNN(object):
         heading_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size,))
         size_class_labels = tf.placeholder(tf.int32, shape=(batch_size,))
         size_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, 3))
+        gt_box_of_prop = tf.placeholder(tf.float32, shape=(batch_size, 8, 3))
         is_training_pl = tf.placeholder(tf.bool, shape=())
         return {
             'pointclouds': pointclouds_pl,
+            'proposal_centers': proposal_centers_pl,
             'class_labels': class_labels_pl,
             'center_bin_x_labels': center_bin_x_labels,
             'center_bin_z_labels': center_bin_z_labels,
@@ -50,6 +53,7 @@ class RCNN(object):
             'heading_res_labels': heading_residuals_labels,
             'size_class_labels': size_class_labels,
             'size_res_labels': size_residuals_labels,
+            'gt_box_of_prop': gt_box_of_prop,
             'is_training_pl': is_training_pl
         }
 
@@ -96,6 +100,7 @@ class RCNN(object):
             NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4,
             activation_fn=None, scope='rcnn-fc3')
         self.parse_output_to_tensors(output)
+        self.get_output_boxes()
 
     def parse_output_to_tensors(self, output):
         ''' Parse batch output to separate tensors (added to end_points)'''
@@ -135,6 +140,23 @@ class RCNN(object):
         # end_points['size_residuals'] = size_residuals_normalized * \
         #     tf.expand_dims(tf.constant(type_mean_size, dtype=tf.float32), 0)
         return self.end_points
+
+    def get_output_boxes(self):
+        end_points = {}
+        # adapt the dimension
+        for k in ['center_x_scores', 'center_x_residuals_normalized',
+            'center_z_scores', 'center_z_residuals_normalized',
+            'center_y_residuals', 'heading_scores', 'heading_residuals_normalized',
+            'size_scores', 'size_residuals_normalized']:
+            end_points[k] = tf.expand_dims(self.end_points[k], axis=1)
+        box_center, box_angle, box_size = get_3d_box_from_output(end_points)
+        box_center = tf.squeeze(box_center, axis=1)
+        box_center = box_center + self.placeholders['proposal_centers']
+        box_angle = tf.squeeze(box_angle, axis=1)
+        box_size = tf.squeeze(box_size, axis=1)
+        corners_3d = get_box3d_corners_helper(box_center, box_angle, box_size)
+        self.end_points['output_boxes'] = corners_3d
+        return corners_3d
 
     def get_loss(self):
         end_points = self.end_points
@@ -197,7 +219,7 @@ class RCNN(object):
 
         mean_size_arr_expand = tf.expand_dims( \
             tf.constant(type_mean_size, dtype=tf.float32),0) # NUM_SIZE_CLUSTERx3 -> 1xNUM_SIZE_CLUSTERx3
-        mean_size_arr_expand_tiled = tf.tile(mean_size_arr_expand, [batch_size, 1, 1])
+        mean_size_arr_expand_tiled = tf.tile(mean_size_arr_expand, [self.batch_size, 1, 1])
         mean_size_label = tf.reduce_sum( \
             scls_onehot_tiled * mean_size_arr_expand_tiled, axis=2) # Bx3
         size_residual_label_normalized = self.placeholders['size_res_labels'] / mean_size_label # Bx3

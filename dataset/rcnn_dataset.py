@@ -79,7 +79,7 @@ class Dataset(object):
         batch_data = np.zeros((bsize, self.npoints, self.num_channel))
         batch_label = np.zeros((bsize,), dtype=np.int32)
         # proposal output for each point
-        batch_objectness = np.zeros((bsize,), dtype=np.int32)
+        batch_prop_centers = np.zeros((bsize, 3), dtype=np.int32)
         batch_center_x_cls = np.zeros((bsize,), dtype=np.int32)
         batch_center_z_cls = np.zeros((bsize,), dtype=np.int32)
         batch_center_x_res = np.zeros((bsize,), dtype=np.float32)
@@ -89,13 +89,14 @@ class Dataset(object):
         batch_size_cls = np.zeros((bsize,), dtype=np.int32)
         batch_angle_res = np.zeros((bsize,), dtype=np.float32)
         batch_size_res = np.zeros((bsize, 3), dtype=np.float32)
-        batch_gt_box_of_point = np.zeros((bsize, 8, 3), dtype=np.float32)
+        batch_gt_box_of_prop = np.zeros((bsize, 8, 3), dtype=np.float32)
         for i in range(bsize):
             sample = self.data_buffer.get()
             batch_ids.append(sample['frame_id'])
             choice = np.random.choice(sample['pointcloud'].shape[0], self.npoints, replace=True)
             batch_data[i,...] = sample['pointcloud'][choice]
             batch_label[i] = sample['class']
+            batch_prop_centers[i,...] = sample['proposal_center']
             batch_center_x_cls[i] = sample['center_cls'][0]
             batch_center_z_cls[i] = sample['center_cls'][1]
             batch_center_x_res[i] = sample['center_res'][0]
@@ -106,6 +107,7 @@ class Dataset(object):
             # batch_center_res[i,...] = center_res
             batch_angle_res[i] = sample['angle_res']
             batch_size_res[i,...] = sample['size_res']
+            batch_gt_box_of_prop[i,...] = sample['gt_box']
         if self.batch_idx == total_batch - 1:
             is_last_batch = True
             self.batch_idx = 0
@@ -113,14 +115,14 @@ class Dataset(object):
         else:
             self.batch_idx += 1
         if need_id:
-            return batch_data, batch_label, batch_center_x_cls,\
+            return batch_data, batch_label, batch_prop_centers, batch_center_x_cls,\
                 batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
                 batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
-                batch_size_res, batch_ids, is_last_batch
-        return batch_data, batch_label, batch_center_x_cls,\
+                batch_size_res, batch_gt_box_of_prop, batch_ids, is_last_batch
+        return batch_data, batch_label, batch_prop_centers, batch_center_x_cls,\
             batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
             batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
-            batch_size_res, is_last_batch
+            batch_size_res, batch_gt_box_of_prop, is_last_batch
 
     def viz_frame(self, pc_rect, mask, gt_boxes):
         import mayavi.mlab as mlab
@@ -226,13 +228,14 @@ class Dataset(object):
         sample = {}
         sample['class'] = 0
         sample['pointcloud'] = pc_rect[mask,:]
+        sample['proposal_center'] = proposal.t
         sample['center_cls'] = np.zeros((2,), dtype=np.int32)
         sample['center_res'] = np.zeros((3,))
         sample['angle_cls'] = 0
         sample['angle_res'] = 0
         sample['size_cls'] = 0
         sample['size_res'] = np.zeros((3,))
-        sample['ref_center'] = proposal.t
+        sample['gt_box'] = np.zeros((8,3))
         if label:
             sample['class'] = g_type2onehotclass[label.type]
             obj_vec = obj_to_proposal_vec(label, proposal.t)
@@ -242,6 +245,8 @@ class Dataset(object):
             sample['angle_res'] = obj_vec[3]
             sample['size_cls'] = obj_vec[4]
             sample['size_res'] = obj_vec[5]
+            _, gt_box_3d = utils.compute_box_3d(label, calib.P)
+            sample['gt_box'] = gt_box_3d
         return sample
 
 if __name__ == '__main__':
