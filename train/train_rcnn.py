@@ -18,8 +18,6 @@ from rcnn_dataset import Dataset
 import train_util
 from rcnn import RCNN
 
-NUM_CHANNEL = 4
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
 parser.add_argument('--model', default='frustum_pointnets_v1', help='Model name [default: frustum_pointnets_v1]')
@@ -96,7 +94,7 @@ def train():
 
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            rcnn_model = RCNN(BATCH_SIZE, NUM_POINT, NUM_CHANNEL)
+            rcnn_model = RCNN(BATCH_SIZE, NUM_POINT)
             placeholders = rcnn_model.placeholders
             # Note the global_step=batch parameter to minimize.
             # That tells the optimizer to increment the 'batch' parameter
@@ -277,104 +275,6 @@ def train_one_epoch(sess, ops, pls, train_writer):
         if is_last_batch:
             break
         batch_idx += 1
-
-
-def eval_one_epoch(sess, ops, test_writer, more=False):
-    global EPOCH_CNT
-    is_training = False
-    log_string(str(datetime.now()))
-    log_string('---- EPOCH %03d EVALUATION ----'%(EPOCH_CNT))
-
-    # To collect statistics
-    total_correct = 0
-    total_seen = 0
-    total_tp = 0
-    total_fp = 0
-    total_fn = 0
-    loss_sum = 0
-    num_samples = 0
-    iou2ds_sum = 0
-    iou3ds_sum = 0
-    total_nms = 0
-    total_proposal_recall = 0
-
-    while(True):
-        batch_pc, batch_mask_label, \
-        batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
-        batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
-        batch_heading_residuals, batch_size_class, batch_size_residuals, batch_gt_boxes, \
-        batch_gt_box_of_point, is_last_batch \
-        = TEST_DATASET.get_next_batch(BATCH_SIZE)
-
-        feed_dict = {
-            ops['pointclouds_pl']: batch_pc,
-            ops['mask_label']: batch_mask_label,
-            ops['center_bin_x']: batch_center_bin_x,
-            ops['center_bin_z']: batch_center_bin_z,
-            ops['center_x_residuals']: batch_center_x_residuals,
-            ops['center_y_residuals']: batch_center_y_residuals,
-            ops['center_z_residuals']: batch_center_z_residuals,
-            ops['heading_bin']: batch_heading_bin,
-            ops['heading_residuals']: batch_heading_residuals,
-            ops['size_class']: batch_size_class,
-            ops['size_residuals']: batch_size_residuals,
-            ops['gt_box_of_point']: batch_gt_box_of_point,
-            ops['is_training_pl']: is_training,
-        }
-
-        summary, step, loss_val, logits_val = sess.run([
-            ops['merged'], ops['step'], ops['loss'],
-            ops['end_points']['foreground_logits']], feed_dict=feed_dict)
-
-        if more:
-            summary, step, loss_val, logits_val, iou2ds, iou3ds, proposal_boxes, nms_indices \
-            = sess.run([
-                ops['merged'], ops['step'], ops['loss'],
-                ops['end_points']['foreground_logits'],
-                ops['end_points']['iou2ds'], ops['end_points']['iou3ds'],
-                ops['end_points']['proposal_boxes'], ops['end_points']['nms_indices']], feed_dict=feed_dict)
-                #feed_dict=feed_dict)
-            iou2ds_sum += np.sum(iou2ds)
-            iou3ds_sum += np.sum(iou3ds)
-            total_nms += len(iou2ds)
-            # average on each frame
-            proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes, nms_indices)
-            total_proposal_recall += proposal_recall * BATCH_SIZE
-        else:
-            summary, step, loss_val, logits_val = sess.run([
-                ops['merged'], ops['step'], ops['loss'],
-                ops['end_points']['foreground_logits']], feed_dict=feed_dict)
-        test_writer.add_summary(summary, step)
-
-        # segmentation acc
-        preds_val = np.argmax(logits_val, 2)
-        correct = np.sum(preds_val == batch_mask_label)
-        tp = np.sum(np.logical_and(preds_val == batch_mask_label, batch_mask_label == 1))
-        fp = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 0))
-        fn = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 1))
-        total_tp += tp
-        total_fp += fp
-        total_fn += fn
-        total_correct += correct
-        total_seen += NUM_POINT * BATCH_SIZE
-        loss_sum += loss_val
-        num_samples += BATCH_SIZE
-        if is_last_batch:
-            break
-
-    log_string('eval mean loss: %f' % (loss_sum / float(num_samples)))
-    log_string('eval segmentation accuracy: %f'% \
-        (total_correct / float(total_seen)))
-    log_string('eval segmentation recall: %f'% \
-        (float(total_tp)/(total_tp+total_fn)))
-    log_string('eval segmentation precision: %f'% \
-        (float(total_tp)/(total_tp+total_fp)))
-    if more:
-        log_string('eval box IoU (ground/3D): %f / %f' % \
-            (iou2ds_sum / float(total_nms), iou3ds_sum / float(total_nms)))
-        log_string('eval proposal recall: %f' % (float(total_proposal_recall) / num_samples))
-    EPOCH_CNT += 1
-    return loss_sum / float(num_samples)
 
 if __name__ == "__main__":
     log_string('pid: %s'%(str(os.getpid())))

@@ -25,7 +25,7 @@ from data_conf import type_whitelist, difficulties_whitelist
 g_type2onehotclass = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
 
 class Dataset(object):
-    def __init__(self, npoints, kitti_path, split, num_channel=4, \
+    def __init__(self, npoints, kitti_path, split, \
         types=type_whitelist, difficulties=difficulties_whitelist):
         self.npoints = npoints
         self.kitti_path = kitti_path
@@ -36,7 +36,7 @@ class Dataset(object):
         self.frame_ids = self.load_split_ids(split)
         random.shuffle(self.frame_ids)
         # self.frame_ids = self.frame_ids[:100]
-        self.num_channel = num_channel
+        self.num_channel = 6 # xyz intensity is_obj_one_hot
         self.AUG_X = 1
 
         self.types_list = types
@@ -225,9 +225,13 @@ class Dataset(object):
         if(np.sum(mask) == 0):
             return False
 
+        points = pc_rect[mask,:]
+        points_with_feats = np.zeros((points.shape[0], self.num_channel))
+        points_with_feats[:,:4] = points # xyz and intensity
+        points_with_feats[:,4:6] = np.array([1, 0]) # one hot
         sample = {}
         sample['class'] = 0
-        sample['pointcloud'] = pc_rect[mask,:]
+        sample['pointcloud'] = points_with_feats
         sample['proposal_center'] = proposal.t
         sample['center_cls'] = np.zeros((2,), dtype=np.int32)
         sample['center_res'] = np.zeros((3,))
@@ -247,26 +251,28 @@ class Dataset(object):
             sample['size_res'] = obj_vec[5]
             _, gt_box_3d = utils.compute_box_3d(label, calib.P)
             sample['gt_box'] = gt_box_3d
+            _, gt_mask = extract_pc_in_box3d(points, gt_box_3d)
+            sample['pointcloud'][gt_mask,4:6] = np.array([0, 1]) # one hot
         return sample
 
 if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
-    dataset = Dataset(16384, kitti_path, split, types=['Car'], difficulties=[1])
-    dataset.load('./train', True)
-    # produce_thread = threading.Thread(target=dataset.load, args=('./train',True))
-    # produce_thread.start()
-    # i = 0
-    # total = 0
-    # while(True):
-    #     batch_data = dataset.get_next_batch(1, need_id=True)
-    #     # total += np.sum(batch_data[1] == 1)
-    #     # print('foreground points:', np.sum(batch_data[1] == 1))
-    #     print(batch_data[-2])
-    #     if i >= 10:
-    #     # if batch_data[-1]:
-    #         break
-    #     i += 1
-    # dataset.stop_loading()
-    # print('stop loading')
-    # produce_thread.join()
+    dataset = Dataset(512, kitti_path, split)
+    # dataset.load('./train', True)
+    produce_thread = threading.Thread(target=dataset.load, args=('./train',True))
+    produce_thread.start()
+    i = 0
+    total = 0
+    while(True):
+        batch_data = dataset.get_next_batch(1, need_id=True)
+        # total += np.sum(batch_data[1] == 1)
+        # print('foreground points:', np.sum(batch_data[1] == 1))
+        print(batch_data[-2])
+        if i >= 10:
+        # if batch_data[-1]:
+            break
+        i += 1
+    dataset.stop_loading()
+    print('stop loading')
+    produce_thread.join()

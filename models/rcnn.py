@@ -88,6 +88,11 @@ class RCNN(object):
         self.end_points['cls_logits'] = cls_net
 
         # Box estimation
+        cls_label_pred = tf.argmax(tf.nn.softmax(cls_net), axis=1)
+        one_hot_pred = tf.one_hot(cls_label_pred, NUM_OBJ_CLASSES)
+        one_hot_gt = tf.one_hot(self.placeholders['class_labels'], NUM_OBJ_CLASSES)
+        one_hot_vec = tf.cond(is_training, lambda: one_hot_gt, lambda: one_hot_pred)
+        feats = tf.concat([feats, one_hot_vec], axis=1)
         net = tf_util.fully_connected(feats, 512, bn=True,
             is_training=is_training, scope='rcnn-fc1', bn_decay=self.bn_decay)
         net = tf_util.fully_connected(net, 256, bn=True,
