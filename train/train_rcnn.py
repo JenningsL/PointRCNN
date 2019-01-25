@@ -94,7 +94,7 @@ def train():
 
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            rcnn_model = RCNN(BATCH_SIZE, NUM_POINT)
+            rcnn_model = RCNN(BATCH_SIZE, NUM_POINT, TRAIN_DATASET.num_channel)
             placeholders = rcnn_model.placeholders
             # Note the global_step=batch parameter to minimize.
             # That tells the optimizer to increment the 'batch' parameter
