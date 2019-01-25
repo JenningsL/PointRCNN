@@ -215,13 +215,13 @@ class RCNN(object):
         scls_onehot_tiled = tf.tile(tf.expand_dims( \
             tf.to_float(scls_onehot), -1), [1,1,3]) # BxNUM_SIZE_CLUSTERx3
         predicted_size_residual_normalized = tf.reduce_sum( \
-            end_points['size_residuals_normalized']*scls_onehot_tiled, axis=-1) # Bx3
+            end_points['size_residuals_normalized']*scls_onehot_tiled, axis=1) # Bx3
 
         mean_size_arr_expand = tf.expand_dims( \
             tf.constant(type_mean_size, dtype=tf.float32),0) # NUM_SIZE_CLUSTERx3 -> 1xNUM_SIZE_CLUSTERx3
         mean_size_arr_expand_tiled = tf.tile(mean_size_arr_expand, [self.batch_size, 1, 1])
         mean_size_label = tf.reduce_sum( \
-            scls_onehot_tiled * mean_size_arr_expand_tiled, axis=2) # Bx3
+            scls_onehot_tiled * mean_size_arr_expand_tiled, axis=1) # Bx3
         size_residual_label_normalized = self.placeholders['size_res_labels'] / mean_size_label # Bx3
 
         size_dist = tf.norm(size_residual_label_normalized - predicted_size_residual_normalized, axis=-1)
@@ -233,9 +233,24 @@ class RCNN(object):
         cls_weight = 1
         res_weight = 1
         total_loss = obj_cls_weight * cls_loss + \
-            cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + 10*size_class_loss) + \
-            res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + 100*heading_res_loss + 100*size_res_loss)
-        return total_loss
+            cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
+            res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + heading_res_loss + size_res_loss)
+
+        loss_endpoints = {
+            #'size_class_loss': size_class_loss,
+            'size_res_loss': size_res_loss,
+            #'heading_class_loss': heading_class_loss,
+            #'heading_res_loss': heading_res_loss,
+            #'center_x_cls_loss': center_x_cls_loss,
+            #'center_z_cls_loss': center_z_cls_loss,
+            #'center_x_res_loss': center_x_res_loss,
+            #'center_z_res_loss': center_z_res_loss,
+            #'center_y_res_loss': center_y_res_loss,
+            #'mask_loss': cls_loss
+            'mean_size_label': mean_size_label,
+            'size_residuals_normalized': end_points['size_residuals_normalized']
+        }
+        return total_loss, loss_endpoints
 
 if __name__ == '__main__':
     with tf.Graph().as_default():
