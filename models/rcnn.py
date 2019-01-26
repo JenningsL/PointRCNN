@@ -10,13 +10,15 @@ import tf_util
 from pointnet_util import pointnet_sa_module, pointnet_sa_module_msg, pointnet_fp_module
 from parameterize import NUM_HEADING_BIN, NUM_SIZE_CLUSTER, NUM_CENTER_BIN, NUM_OBJ_CLASSES, type_mean_size
 from model_util import huber_loss, get_3d_box_from_output, get_box3d_corners_helper
+import projection
 
 class RCNN(object):
-    def __init__(self, batch_size, num_point, num_channel=133, bn_decay=None):
+    def __init__(self, batch_size, num_point, num_channel=133, bn_decay=None, is_training=False):
         self.batch_size = batch_size
         self.num_point = num_point
         self.num_channel = num_channel
         self.bn_decay = bn_decay
+        self.is_training = is_training
         self.end_points = {}
         self.placeholders = self.get_placeholders()
         self.build()
@@ -25,42 +27,65 @@ class RCNN(object):
         batch_size = self.batch_size
         num_point = self.num_point
         num_channel = self.num_channel
-        pointclouds_pl = tf.placeholder(tf.float32,
-            shape=(batch_size, num_point, num_channel))
-        proposal_centers_pl = tf.placeholder(tf.float32, shape=(batch_size, 3))
-        class_labels_pl = tf.placeholder(tf.int32, shape=(batch_size,))
-        center_bin_x_labels = tf.placeholder(tf.int32, shape=(batch_size,))
-        center_bin_z_labels = tf.placeholder(tf.int32, shape=(batch_size,))
-        center_x_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size,))
-        center_z_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size,))
-        center_y_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size,))
-        heading_bin_labels = tf.placeholder(tf.int32, shape=(batch_size,))
-        heading_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size,))
-        size_class_labels = tf.placeholder(tf.int32, shape=(batch_size,))
-        size_residuals_labels = tf.placeholder(tf.float32, shape=(batch_size, 3))
-        gt_box_of_prop = tf.placeholder(tf.float32, shape=(batch_size, 8, 3))
-        is_training_pl = tf.placeholder(tf.bool, shape=())
         return {
-            'pointclouds': pointclouds_pl,
-            'proposal_centers': proposal_centers_pl,
-            'class_labels': class_labels_pl,
-            'center_bin_x_labels': center_bin_x_labels,
-            'center_bin_z_labels': center_bin_z_labels,
-            'center_x_res_labels': center_x_residuals_labels,
-            'center_z_res_labels': center_z_residuals_labels,
-            'center_y_res_labels': center_y_residuals_labels,
-            'heading_bin_labels': heading_bin_labels,
-            'heading_res_labels': heading_residuals_labels,
-            'size_class_labels': size_class_labels,
-            'size_res_labels': size_residuals_labels,
-            'gt_box_of_prop': gt_box_of_prop,
-            'is_training_pl': is_training_pl
+            'pointclouds': tf.placeholder(tf.float32, shape=(batch_size, num_point, num_channel)),
+            'proposal_boxes': tf.placeholder(tf.float32, shape=(batch_size, 7)),
+            'class_labels': tf.placeholder(tf.int32, shape=(batch_size,)),
+            'center_bin_x_labels': tf.placeholder(tf.int32, shape=(batch_size,)),
+            'center_bin_z_labels': tf.placeholder(tf.int32, shape=(batch_size,)),
+            'center_x_res_labels': tf.placeholder(tf.float32, shape=(batch_size,)),
+            'center_z_res_labels': tf.placeholder(tf.float32, shape=(batch_size,)),
+            'center_y_res_labels': tf.placeholder(tf.float32, shape=(batch_size,)),
+            'heading_bin_labels': tf.placeholder(tf.int32, shape=(batch_size,)),
+            'heading_res_labels': tf.placeholder(tf.float32, shape=(batch_size,)),
+            'size_class_labels': tf.placeholder(tf.int32, shape=(batch_size,)),
+            'size_res_labels': tf.placeholder(tf.float32, shape=(batch_size, 3)),
+            'gt_box_of_prop': tf.placeholder(tf.float32, shape=(batch_size, 8, 3)),
+            'img_inputs': tf.placeholder(tf.float32, shape=(batch_size, None, None, 3)),
+            'calib': tf.placeholder(tf.float32, shape=(batch_size, 3, 4)),
+            'is_training_pl': tf.placeholder(tf.bool, shape=())
         }
+
+    def build_img_extractor():
+        self._img_pixel_size = np.asarray([375, 1242])
+        self._img_feature_extractor = ImgVggPyr({
+            'vgg_conv1': [2, 32],
+            'vgg_conv2': [2, 64],
+            'vgg_conv3': [3, 128],
+            'vgg_conv4': [3, 256],
+            'l2_weight_decay': 0.0005
+        })
+        self._img_preprocessed = \
+            self._img_feature_extractor.preprocess_input(
+                self.placeholders['img_inputs'], self._img_pixel_size)
+        self.img_feature_maps, self.img_end_points = \
+            self._img_feature_extractor.build(
+                self._img_preprocessed,
+                self._img_pixel_size,
+                self._is_training)
+        self.img_bottleneck = slim.conv2d(
+            self.img_feature_maps,
+            1, [1, 1],
+            scope='bottleneck',
+            normalizer_fn=slim.batch_norm,
+            normalizer_params={
+                'is_training': self.is_training})
 
     def build(self):
         point_cloud = self.placeholders['pointclouds']
         is_training = self.placeholders['is_training_pl']
         batch_size = self.batch_size
+        # image
+        img_bottleneck = self.build_img_extractor()
+        box2d_corners, box2d_corners_norm = projection.tf_project_to_image_space(
+            self.placeholders['proposal_boxes'],
+            self.placeholders['calib'], self._img_pixel_size)
+        img_rois = tf.image.crop_and_resize(
+            img_bottleneck,
+            box2d_corners_norm,
+            tf.range(0, batch_size),
+            [3,3])
+
         l0_xyz = tf.slice(point_cloud, [0,0,0], [-1,-1,3])
         l0_points = tf.slice(point_cloud, [0,0,3], [-1,-1,self.num_channel-3])
         # Set abstraction layers
@@ -77,7 +102,9 @@ class RCNN(object):
             mlp2=None, group_all=True, is_training=is_training, bn_decay=self.bn_decay,
             scope='rcnn-sa3', bn=True)
 
-        feats = tf.reshape(l3_points, [batch_size, -1])
+        point_feats = tf.reshape(l3_points, [batch_size, -1])
+        img_feats = tf.reshape(img_rois, [batch_size, -1])
+        feats = tf.concat([point_feats, img_feats], axis=-1)
 
         # Classification
         cls_net = tf_util.fully_connected(feats, 512, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
@@ -156,7 +183,7 @@ class RCNN(object):
             end_points[k] = tf.expand_dims(self.end_points[k], axis=1)
         box_center, box_angle, box_size = get_3d_box_from_output(end_points)
         box_center = tf.squeeze(box_center, axis=1)
-        box_center = box_center + self.placeholders['proposal_centers']
+        box_center = box_center + tf.slice(self.placeholders['proposal_boxes'], [0,0], [-1,3])
         box_angle = tf.squeeze(box_angle, axis=1)
         box_size = tf.squeeze(box_size, axis=1)
         corners_3d = get_box3d_corners_helper(box_center, box_angle, box_size)

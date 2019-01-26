@@ -193,26 +193,22 @@ def train_one_epoch(sess, ops, pls, train_writer):
     # Training with batches
     batch_idx = 0
     while(True):
-        batch_pc, batch_cls_label, batch_prop_centers, \
-        batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
-        batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
-        batch_heading_residuals, batch_size_class, batch_size_residuals, \
-        batch_gt_box_of_prop, is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
+        batch_data, is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {
-            pls['pointclouds']: batch_pc,
-            pls['proposal_centers']: batch_prop_centers,
-            pls['class_labels']: batch_cls_label,
-            pls['center_bin_x_labels']: batch_center_bin_x,
-            pls['center_bin_z_labels']: batch_center_bin_z,
-            pls['center_x_res_labels']: batch_center_x_residuals,
-            pls['center_y_res_labels']: batch_center_y_residuals,
-            pls['center_z_res_labels']: batch_center_z_residuals,
-            pls['heading_bin_labels']: batch_heading_bin,
-            pls['heading_res_labels']: batch_heading_residuals,
-            pls['size_class_labels']: batch_size_class,
-            pls['size_res_labels']: batch_size_residuals,
-            pls['gt_box_of_prop']: batch_gt_box_of_prop,
+            pls['pointclouds']: batch_data['pointcloud'],
+            pls['proposal_boxes']: batch_data['prop_box'],
+            pls['class_labels']: batch_data['label'],
+            pls['center_bin_x_labels']: batch_data['center_x_cls'],
+            pls['center_bin_z_labels']: batch_data['center_z_cls'],
+            pls['center_x_res_labels']: batch_data['center_x_res'],
+            pls['center_y_res_labels']: batch_data['center_y_res'],,
+            pls['center_z_res_labels']: batch_data['center_z_res'],,
+            pls['heading_bin_labels']: batch_data['angle_cls'],
+            pls['heading_res_labels']: batch_data['angle_res'],
+            pls['size_class_labels']: batch_data['size_cls'],
+            pls['size_res_labels']: batch_data['size_res'],
+            pls['gt_box_of_prop']: batch_data['gt_box_of_prop'],
             pls['is_training_pl']: is_training
         }
 
