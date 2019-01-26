@@ -25,14 +25,15 @@ class ImgFeatureExtractor:
             Preprocessed tensor input, resized to the output_size
         """
         image = tf.image.resize_images(tensor_in, output_size)
-        image = tf.squeeze(image)
+        #image = tf.squeeze(image)
         image = tf.to_float(image)
         image_normalized = self._mean_image_subtraction(image,
                                                         [self._R_MEAN,
                                                          self._G_MEAN,
                                                          self._B_MEAN])
-        tensor_out = tf.expand_dims(image_normalized, axis=0)
-        return tensor_out
+        #tensor_out = tf.expand_dims(image_normalized, axis=0)
+        #return tensor_out
+        return image_normalized
 
     def _mean_image_subtraction(self, image, means):
         """Subtracts the given means from each image channel.
@@ -55,19 +56,19 @@ class ImgFeatureExtractor:
             other than three or if the number of channels in `image` doesn't
             match the number of values in `means`.
         """
-        if image.get_shape().ndims != 3:
-            raise ValueError('Input must be of size [height, width, C>0]')
+        if image.get_shape().ndims != 4:
+            raise ValueError('Input must be of size [batch, height, width, C>0]')
         num_channels = image.get_shape().as_list()[-1]
         if len(means) != num_channels:
             raise ValueError('len(means) must match the number of channels')
 
         channels = tf.split(
-            axis=2,
+            axis=3,
             num_or_size_splits=num_channels,
             value=image)
         for i in range(num_channels):
             channels[i] -= means[i]
-        return tf.concat(axis=2, values=channels)
+        return tf.concat(axis=3, values=channels)
 
     @abstractmethod
     def build(self, **kwargs):

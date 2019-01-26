@@ -1,6 +1,7 @@
 import sys
 import os
 import tensorflow as tf
+slim = tf.contrib.slim
 import numpy as np
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
@@ -11,9 +12,11 @@ from pointnet_util import pointnet_sa_module, pointnet_sa_module_msg, pointnet_f
 from parameterize import NUM_HEADING_BIN, NUM_SIZE_CLUSTER, NUM_CENTER_BIN, NUM_OBJ_CLASSES, type_mean_size
 from model_util import huber_loss, get_3d_box_from_output, get_box3d_corners_helper
 import projection
+from img_vgg_pyramid import ImgVggPyr
+from collections import namedtuple
 
 class RCNN(object):
-    def __init__(self, batch_size, num_point, num_channel=133, bn_decay=None, is_training=False):
+    def __init__(self, batch_size, num_point, num_channel=133, bn_decay=None, is_training=True):
         self.batch_size = batch_size
         self.num_point = num_point
         self.num_channel = num_channel
@@ -41,20 +44,21 @@ class RCNN(object):
             'size_class_labels': tf.placeholder(tf.int32, shape=(batch_size,)),
             'size_res_labels': tf.placeholder(tf.float32, shape=(batch_size, 3)),
             'gt_box_of_prop': tf.placeholder(tf.float32, shape=(batch_size, 8, 3)),
-            'img_inputs': tf.placeholder(tf.float32, shape=(batch_size, None, None, 3)),
+            'img_inputs': tf.placeholder(tf.float32, shape=(batch_size, 360, 1200, 3)),
             'calib': tf.placeholder(tf.float32, shape=(batch_size, 3, 4)),
             'is_training_pl': tf.placeholder(tf.bool, shape=())
         }
 
-    def build_img_extractor():
-        self._img_pixel_size = np.asarray([375, 1242])
-        self._img_feature_extractor = ImgVggPyr({
+    def build_img_extractor(self):
+        self._img_pixel_size = np.asarray([360, 1200])
+        VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
+        self._img_feature_extractor = ImgVggPyr(VGG_config(**{
             'vgg_conv1': [2, 32],
             'vgg_conv2': [2, 64],
             'vgg_conv3': [3, 128],
             'vgg_conv4': [3, 256],
             'l2_weight_decay': 0.0005
-        })
+        }))
         self._img_preprocessed = \
             self._img_feature_extractor.preprocess_input(
                 self.placeholders['img_inputs'], self._img_pixel_size)
@@ -62,7 +66,7 @@ class RCNN(object):
             self._img_feature_extractor.build(
                 self._img_preprocessed,
                 self._img_pixel_size,
-                self._is_training)
+                self.is_training)
         self.img_bottleneck = slim.conv2d(
             self.img_feature_maps,
             1, [1, 1],
@@ -70,6 +74,7 @@ class RCNN(object):
             normalizer_fn=slim.batch_norm,
             normalizer_params={
                 'is_training': self.is_training})
+        return self.img_bottleneck
 
     def build(self):
         point_cloud = self.placeholders['pointclouds']
@@ -107,7 +112,7 @@ class RCNN(object):
         feats = tf.concat([point_feats, img_feats], axis=-1)
 
         # Classification
-        cls_net = tf_util.fully_connected(feats, 512, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
+        cls_net = tf_util.fully_connected(img_feats, 512, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
         #cls_net = tf_util.dropout(cls_net, keep_prob=0.4, is_training=is_training, scope='cls_dp1')
         cls_net = tf_util.fully_connected(cls_net, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc2', bn_decay=self.bn_decay)
         #cls_net = tf_util.dropout(cls_net, keep_prob=0.4, is_training=is_training, scope='cls_dp2')
@@ -119,18 +124,20 @@ class RCNN(object):
         one_hot_pred = tf.one_hot(cls_label_pred, NUM_OBJ_CLASSES)
         one_hot_gt = tf.one_hot(self.placeholders['class_labels'], NUM_OBJ_CLASSES)
         one_hot_vec = tf.cond(is_training, lambda: one_hot_gt, lambda: one_hot_pred)
-        feats = tf.concat([feats, one_hot_vec], axis=1)
-        net = tf_util.fully_connected(feats, 512, bn=True,
-            is_training=is_training, scope='rcnn-fc1', bn_decay=self.bn_decay)
+        est_intput = tf.concat([point_feats, one_hot_vec], axis=1)
+        net = tf_util.fully_connected(est_intput, 512, bn=True,
+            is_training=is_training, scope='rcnn-est-fc1', bn_decay=self.bn_decay)
         net = tf_util.fully_connected(net, 256, bn=True,
-            is_training=is_training, scope='rcnn-fc2', bn_decay=self.bn_decay)
+            is_training=is_training, scope='rcnn-est-fc2', bn_decay=self.bn_decay)
+        net = tf_util.fully_connected(net, 512, bn=True,
+            is_training=is_training, scope='rcnn-est-fc3', bn_decay=self.bn_decay)
         # The first NUM_CENTER_BIN*2*2: CENTER_BIN class scores and bin residuals for (x,z)
         # next 1: center residual for y
         # next NUM_HEADING_BIN*2: heading bin class scores and residuals
         # next NUM_SIZE_CLUSTER*4: size cluster class scores and residuals(l,w,h)
         output = tf_util.fully_connected(net,
             NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4,
-            activation_fn=None, scope='rcnn-fc3')
+            activation_fn=None, scope='rcnn-est-out')
         self.parse_output_to_tensors(output)
         self.get_output_boxes()
 

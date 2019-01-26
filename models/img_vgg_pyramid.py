@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from avod.core.feature_extractors import img_feature_extractor
+import img_feature_extractor
 
 slim = tf.contrib.slim
 

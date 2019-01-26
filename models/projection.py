@@ -1,3 +1,4 @@
+import tensorflow as tf
 from model_util import get_box3d_corners_helper
 
 def project_to_image_tensor(points_3d, cam_p2_matrix):
@@ -49,39 +50,36 @@ def tf_project_to_image_space(boxes, calib, image_shape):
         box_corners_norm: a float32 tensor corners as a percentage
             of the image size - N x [x1, y1, x2, y2]
     """
+    batch_size = boxes.shape[0]
     box_center = tf.slice(boxes, [0,0], [-1, 3])
     box_angle = tf.slice(boxes, [0,3], [-1, 1])
     box_size = tf.slice(boxes, [0,4], [-1, 3])
     corners_3d = get_box3d_corners_helper(
-        box_center, tf.gather(box_angle, 0, axis=-1), box_size)
+        box_center, tf.gather(box_angle, 0, axis=-1), box_size) # (B,8,3)
+    #corners_3d_list = tf.reshape(corners_3d, [batch_size*8, 3])
+    corners_3d = tf.expand_dims(corners_3d, axis=2) # (B,8,1,3)
+    calib_tiled = tf.tile(tf.expand_dims(calib, 1), [1,8,1,1]) # (B,8,3,4)
+    projected_pts = tf.matmul(corners_3d, calib_tiled) # (B,8,1,4)
 
-    # Apply the 2D image plane transformation
-    pts_2d = project_to_image_tensor(corners_3d, calib)
+    projected_pts_norm = projected_pts/tf.slice(projected_pts, [0,0,0,2], [-1,-1,-1,1]) # divided by depth
 
-    # Get the min and maxes of image coordinates
-    i_axis_min_points = tf.reduce_min(
-        tf.reshape(pts_2d[0, :], (-1, 8)), axis=1)
-    j_axis_min_points = tf.reduce_min(
-        tf.reshape(pts_2d[1, :], (-1, 8)), axis=1)
+    corners_2d = tf.gather(tf.squeeze(projected_pts_norm, axis=2), [0,1], axis=-1) # (B,8,2)
 
-    i_axis_max_points = tf.reduce_max(
-        tf.reshape(pts_2d[0, :], (-1, 8)), axis=1)
-    j_axis_max_points = tf.reduce_max(
-        tf.reshape(pts_2d[1, :], (-1, 8)), axis=1)
-
-    box_corners = tf.transpose(
-        tf.stack(
-            [i_axis_min_points, j_axis_min_points, i_axis_max_points,
-             j_axis_max_points],
-            axis=0))
+    pts_2d_min = tf.reduce_min(corners_2d, axis=1)
+    pts_2d_max = tf.reduce_max(corners_2d, axis=1) # (B, 2)
+    box_corners = tf.stack([
+        tf.gather(pts_2d_min, 0, axis=1),
+        tf.gather(pts_2d_min, 1, axis=1),
+        tf.gather(pts_2d_max, 0, axis=1),
+        tf.gather(pts_2d_max, 1, axis=1),
+        ], axis=1) # (B,4)
 
     # Normalize
     image_shape_h = image_shape[0]
     image_shape_w = image_shape[1]
 
-    image_shape_tiled = tf.stack([image_shape_w, image_shape_h,
-                                  image_shape_w, image_shape_h], axis=0)
+    image_shape_tiled = tf.tile([[image_shape_w, image_shape_h, image_shape_w, image_shape_h]], [batch_size,1])
 
-    box_corners_norm = tf.divide(box_corners, image_shape_tiled)
+    box_corners_norm = box_corners / tf.to_float(image_shape_tiled)
 
     return box_corners, box_corners_norm

@@ -471,12 +471,12 @@ def get_loss(labels, end_points):
     tf.summary.scalar('size class loss', size_class_loss)
     tf.summary.scalar('size residual loss', size_res_loss)
 
-    seg_weight = 0.01
-    cls_weight = 1
-    res_weight = 1
+    seg_weight = 0.1
+    cls_weight = 10
+    res_weight = 10
     total_loss = seg_weight * mask_loss + \
-        cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + 10*size_class_loss) + \
-        res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + 100*heading_res_loss + 100*size_res_loss)
+        cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
+        res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + heading_res_loss + size_res_loss)
     loss_endpoints = {
         'size_class_loss': size_class_loss,
         'size_res_loss': size_res_loss,

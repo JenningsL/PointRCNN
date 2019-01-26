@@ -78,7 +78,7 @@ class Dataset(object):
         batch = {
             'ids': [],
             'pointcloud': np.zeros((bsize, self.npoints, self.num_channel)),
-            'images': np.zeros((bsize, 375, 1242, 3)),
+            'images': np.zeros((bsize, 360, 1200, 3)),
             'calib': np.zeros((bsize, 3, 4)),
             'label': np.zeros((bsize,), dtype=np.int32),
             # proposal output for each point
@@ -241,7 +241,7 @@ class Dataset(object):
         sample = {}
         sample['class'] = 0
         sample['pointcloud'] = points_with_feats
-        sample['image'] = image
+        sample['image'] = cv2.resize(image, (1200, 360))
         sample['calib'] = calib.P
         sample['proposal_box'] = np.array([proposal.t[0], proposal.t[1], proposal.t[2],
             proposal.ry, proposal.h, proposal.w, proposal.l])

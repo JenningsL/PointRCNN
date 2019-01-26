@@ -94,7 +94,7 @@ def train():
 
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            rcnn_model = RCNN(BATCH_SIZE, NUM_POINT, TRAIN_DATASET.num_channel)
+            rcnn_model = RCNN(BATCH_SIZE, NUM_POINT, TRAIN_DATASET.num_channel, is_training=True)
             placeholders = rcnn_model.placeholders
             # Note the global_step=batch parameter to minimize.
             # That tells the optimizer to increment the 'batch' parameter
@@ -197,13 +197,15 @@ def train_one_epoch(sess, ops, pls, train_writer):
 
         feed_dict = {
             pls['pointclouds']: batch_data['pointcloud'],
+            pls['img_inputs']: batch_data['images'],
+            pls['calib']: batch_data['calib'],
             pls['proposal_boxes']: batch_data['prop_box'],
             pls['class_labels']: batch_data['label'],
             pls['center_bin_x_labels']: batch_data['center_x_cls'],
             pls['center_bin_z_labels']: batch_data['center_z_cls'],
             pls['center_x_res_labels']: batch_data['center_x_res'],
-            pls['center_y_res_labels']: batch_data['center_y_res'],,
-            pls['center_z_res_labels']: batch_data['center_z_res'],,
+            pls['center_y_res_labels']: batch_data['center_y_res'],
+            pls['center_z_res_labels']: batch_data['center_z_res'],
             pls['heading_bin_labels']: batch_data['angle_cls'],
             pls['heading_res_labels']: batch_data['angle_res'],
             pls['size_class_labels']: batch_data['size_cls'],
@@ -232,10 +234,10 @@ def train_one_epoch(sess, ops, pls, train_writer):
 
         # segmentation acc
         preds_val = np.argmax(logits_val, axis=-1)
-        correct = np.sum(preds_val == batch_cls_label)
-        tp = np.sum(np.logical_and(preds_val == batch_cls_label, batch_cls_label > 0))
-        fp = np.sum(np.logical_and(preds_val != batch_cls_label, batch_cls_label == 0))
-        fn = np.sum(np.logical_and(preds_val != batch_cls_label, batch_cls_label > 0))
+        correct = np.sum(preds_val == batch_data['label'])
+        tp = np.sum(np.logical_and(preds_val == batch_data['label'], batch_data['label'] > 0))
+        fp = np.sum(np.logical_and(preds_val != batch_data['label'], batch_data['label'] == 0))
+        fn = np.sum(np.logical_and(preds_val != batch_data['label'], batch_data['label'] > 0))
         total_correct += correct
         total_tp += tp
         total_fp += fp
