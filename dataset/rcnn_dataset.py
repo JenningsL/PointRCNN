@@ -228,7 +228,9 @@ class Dataset(object):
         points = pc_rect[mask,:]
         points_with_feats = np.zeros((points.shape[0], self.num_channel))
         points_with_feats[:,:4] = points # xyz and intensity
+        points_with_feats[:,:3] -= proposal.t # normalize
         points_with_feats[:,4:6] = np.array([1, 0]) # one hot
+
         sample = {}
         sample['class'] = 0
         sample['pointcloud'] = points_with_feats
