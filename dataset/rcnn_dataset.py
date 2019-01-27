@@ -134,7 +134,7 @@ class Dataset(object):
 
     def load_proposals(self, idx, rpn_score_threshold=0.1):
         proposals_file_path = os.path.join(self.proposal_dir, '%06d.txt'%(idx))
-        roi_file_path = os.path.join(self.proposal_dir, '%06d_roi.txt'%(idx))
+        #roi_file_path = os.path.join(self.proposal_dir, '%06d_roi.txt'%(idx))
         proposals_and_scores = np.loadtxt(proposals_file_path)
         keep_idxs = np.arange(0, len(proposals_and_scores))
         proposal_boxes_3d = proposals_and_scores[:, 0:7]
@@ -157,11 +157,12 @@ class Dataset(object):
             # boxes.append(corners_velo)
             boxes.append(corners)
             box_scores.append(obj.score)
-        proposals_roi_features = np_read_lines(roi_file_path, keep_idxs)
+        #proposals_roi_features = np_read_lines(roi_file_path, keep_idxs)
         proposal_scores = proposal_scores[keep_idxs]
-        for obj, score, feat in zip(proposal_objs, proposal_scores, proposals_roi_features):
+        #for obj, score, feat in zip(proposal_objs, proposal_scores, proposals_roi_features):
+        for obj, score in zip(proposal_objs, proposal_scores):
             obj.score = score
-            obj.roi_features = feat
+            obj.roi_features = None
 
         return proposal_objs
 

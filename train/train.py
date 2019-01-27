@@ -197,7 +197,8 @@ def train():
             sys.stdout.flush()
             # eval iou and recall is slow
             #eval_iou_recall = (epoch % 10 == 0 and epoch != 0)
-            eval_iou_recall = True
+            #eval_iou_recall = True
+            eval_iou_recall = (epoch > 10 and epoch % 2 == 0)
             train_one_epoch(sess, ops, train_writer, eval_iou_recall)
             #if epoch % 3 == 0:
             # Save the variables to disk.
@@ -207,7 +208,8 @@ def train():
             #     log_string("Model saved in file: {0}, val_loss: {1}".format(save_path, val_loss))
             save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
             log_string("Model saved in file: {0}".format(save_path))
-            val_loss = eval_one_epoch(sess, ops, test_writer, eval_iou_recall)
+            if eval_iou_recall:
+                val_loss = eval_one_epoch(sess, ops, test_writer, eval_iou_recall)
     TRAIN_DATASET.stop_loading()
     TEST_DATASET.stop_loading()
     train_produce_thread.join()
@@ -270,7 +272,7 @@ def train_one_epoch(sess, ops, train_writer, more=False):
             proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes, nms_indices)
             total_proposal_recall += proposal_recall * BATCH_SIZE
         else:
-            summary, step, loss_val, _, logits_val, _ = sess.run([
+            summary, step, loss_val, _, logits_val = sess.run([
                 ops['merged'], ops['step'], ops['loss'], ops['train_op'],
                 ops['end_points']['foreground_logits']], feed_dict=feed_dict)
 
@@ -365,10 +367,6 @@ def eval_one_epoch(sess, ops, test_writer, more=False):
             ops['gt_box_of_point']: batch_gt_box_of_point,
             ops['is_training_pl']: is_training,
         }
-
-        summary, step, loss_val, logits_val = sess.run([
-            ops['merged'], ops['step'], ops['loss'],
-            ops['end_points']['foreground_logits']], feed_dict=feed_dict)
 
         if more:
             summary, step, loss_val, logits_val, iou2ds, iou3ds, proposal_boxes, nms_indices \
