@@ -1,37 +1,6 @@
 import tensorflow as tf
 from model_util import get_box3d_corners_helper
-
-def project_to_image_tensor(points_3d, cam_p2_matrix):
-    """Projects 3D points to 2D points in image space.
-
-    Args:
-        points_3d: a list of float32 tensor of shape [3, None]
-        cam_p2_matrix: a float32 tensor of shape [3, 4] representing
-            the camera matrix.
-
-    Returns:
-        points_2d: a list of float32 tensor of shape [2, None]
-            This is the projected 3D points into 2D .i.e. corresponding
-            3D points in image coordinates.
-    """
-    ones_column = tf.ones([1, tf.shape(points_3d)[1]])
-
-    # Add extra column of ones
-    points_3d_concat = tf.concat([points_3d, ones_column], axis=0)
-
-    # Multiply camera matrix by the 3D points
-    points_2d = tf.matmul(cam_p2_matrix, points_3d_concat)
-
-    # 'Tensor' object does not support item assignment
-    # so instead get the result of each division and stack
-    # the results
-    points_2d_c1 = points_2d[0, :] / points_2d[2, :]
-    points_2d_c2 = points_2d[1, :] / points_2d[2, :]
-    stacked_points_2d = tf.stack([points_2d_c1,
-                                  points_2d_c2],
-                                 axis=0)
-
-    return stacked_points_2d
+import numpy as np
 
 def tf_project_to_image_space(boxes, calib, image_shape):
     """
@@ -57,13 +26,16 @@ def tf_project_to_image_space(boxes, calib, image_shape):
     corners_3d = get_box3d_corners_helper(
         box_center, tf.gather(box_angle, 0, axis=-1), box_size) # (B,8,3)
     #corners_3d_list = tf.reshape(corners_3d, [batch_size*8, 3])
-    corners_3d = tf.expand_dims(corners_3d, axis=2) # (B,8,1,3)
+    # corners_3d = tf.expand_dims(corners_3d, axis=2) # (B,8,1,3)
+    corners_3d_hom = tf.concat([corners_3d, tf.ones((batch_size,8,1))], axis=-1) # (B,8,4)
+    corners_3d_hom = tf.expand_dims(corners_3d_hom, axis=-1) # (B,8,4,1)
     calib_tiled = tf.tile(tf.expand_dims(calib, 1), [1,8,1,1]) # (B,8,3,4)
-    projected_pts = tf.matmul(corners_3d, calib_tiled) # (B,8,1,4)
+    projected_pts = tf.matmul(calib_tiled, corners_3d_hom) # (B,8,3,1)
+    projected_pts = tf.squeeze(projected_pts, axis=-1) # (B,8,3)
 
-    projected_pts_norm = projected_pts/tf.slice(projected_pts, [0,0,0,2], [-1,-1,-1,1]) # divided by depth
+    projected_pts_norm = projected_pts/tf.slice(projected_pts, [0,0,2], [-1,-1,1]) # divided by depth
 
-    corners_2d = tf.gather(tf.squeeze(projected_pts_norm, axis=2), [0,1], axis=-1) # (B,8,2)
+    corners_2d = tf.gather(projected_pts_norm, [0,1], axis=-1) # (B,8,2)
 
     pts_2d_min = tf.reduce_min(corners_2d, axis=1)
     pts_2d_max = tf.reduce_max(corners_2d, axis=1) # (B, 2)

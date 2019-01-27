@@ -35,14 +35,15 @@ class Dataset(object):
         self.kitti_dataset = kitti_object(kitti_path, 'training')
         self.frame_ids = self.load_split_ids(split)
         random.shuffle(self.frame_ids)
-        # self.frame_ids = self.frame_ids[:100]
+        # self.frame_ids = self.frame_ids[:1]
         self.num_channel = 6 # xyz intensity is_obj_one_hot
         self.AUG_X = 1
 
         self.types_list = types
         self.difficulties_list = difficulties
 
-        self.batch_idx = 0
+        self.sample_id_counter = -1 # as id for sample
+        self.last_sample_id = None
         # preloading
         self.stop = False
         self.data_buffer = Queue(maxsize=128)
@@ -53,6 +54,7 @@ class Dataset(object):
 
     def load(self, save_path, aug=False):
         i = 0
+        last_sample_id = None
         while not self.stop:
             frame_id = self.frame_ids[i]
             #print('loading ' + frame_id)
@@ -63,6 +65,11 @@ class Dataset(object):
                 for s in samples:
                     s['frame_id'] = frame_id
                     self.data_buffer.put(s)
+            if len(samples) > 0:
+                last_sample_id = samples[-1]['id']
+            if i == len(self.frame_ids) - 1:
+                self.last_sample_id = last_sample_id
+                random.shuffle(self.frame_ids)
             i = (i + 1) % len(self.frame_ids)
 
     def stop_loading(self):
@@ -73,16 +80,14 @@ class Dataset(object):
 
     def get_next_batch(self, bsize, need_id=False):
         is_last_batch = False
-        total_batch = len(self.frame_ids)*self.AUG_X / bsize
 
         batch = {
             'ids': [],
-            'pointcloud': np.zeros((bsize, self.npoints, self.num_channel)),
-            'images': np.zeros((bsize, 360, 1200, 3)),
-            'calib': np.zeros((bsize, 3, 4)),
+            'pointcloud': np.zeros((bsize, self.npoints, self.num_channel), dtype=np.float32),
+            'images': np.zeros((bsize, 360, 1200, 3), dtype=np.float32),
+            'calib': np.zeros((bsize, 3, 4), dtype=np.float32),
             'label': np.zeros((bsize,), dtype=np.int32),
-            # proposal output for each point
-            'prop_box': np.zeros((bsize, 7), dtype=np.int32),
+            'prop_box': np.zeros((bsize, 7), dtype=np.float32),
             'center_x_cls': np.zeros((bsize,), dtype=np.int32),
             'center_z_cls': np.zeros((bsize,), dtype=np.int32),
             'center_x_res': np.zeros((bsize,), dtype=np.float32),
@@ -96,6 +101,9 @@ class Dataset(object):
         }
         for i in range(bsize):
             sample = self.data_buffer.get()
+            if sample['id'] == self.last_sample_id:
+                is_last_batch = True
+                self.last_sample_id = None
             batch['ids'].append(sample['frame_id'])
             choice = np.random.choice(sample['pointcloud'].shape[0], self.npoints, replace=True)
             batch['pointcloud'][i,...] = sample['pointcloud'][choice]
@@ -113,23 +121,8 @@ class Dataset(object):
             batch['angle_res'][i] = sample['angle_res']
             batch['size_res'][i,...] = sample['size_res']
             batch['gt_box_of_prop'][i,...] = sample['gt_box']
-        if self.batch_idx == total_batch - 1:
-            is_last_batch = True
-            self.batch_idx = 0
-            random.shuffle(self.frame_ids)
-        else:
-            self.batch_idx += 1
 
         return batch, is_last_batch
-        # if need_id:
-        #     return batch_data, batch_label, batch_prop_box, batch_center_x_cls,\
-        #         batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
-        #         batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
-        #         batch_size_res, batch_gt_box_of_prop, batch_ids, is_last_batch
-        # return batch_data, batch_label, batch_prop_box, batch_center_x_cls,\
-        #     batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
-        #     batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
-        #     batch_size_res, batch_gt_box_of_prop, is_last_batch
 
     def viz_frame(self, pc_rect, mask, gt_boxes):
         import mayavi.mlab as mlab
@@ -202,31 +195,40 @@ class Dataset(object):
         proposals = self.load_proposals(data_idx)
         positive_samples = []
         negative_samples = []
+        # show_boxes = []
+        # boxes_2d = []
         for prop in proposals:
-            _,prop_box_3d = utils.compute_box_3d(prop, calib.P)
+            b2d,prop_box_3d = utils.compute_box_3d(prop, calib.P)
             prop_box_xy = prop_box_3d[:4, [0,2]]
             gt_idx, gt_iou = find_match_label(prop_box_xy, gt_boxes_xy)
             if gt_iou < 0.55:
                 sample = self.get_sample(pc_rect, image, calib, prop)
                 if sample:
                     negative_samples.append(sample)
+                    # show_boxes.append(prop_box_3d)
             else:
                 sample = self.get_sample(pc_rect, image, calib, prop, objects[gt_idx])
                 if sample:
                     positive_samples.append(sample)
+                    # boxes_2d.append(b2d)
+                    # show_boxes.append(prop_box_3d)
         #print('positive:', len(positive_samples))
         #print('negative:', len(negative_samples))
         random.shuffle(negative_samples)
         samples = positive_samples + negative_samples[:len(positive_samples)]
         random.shuffle(samples)
-        # self.viz_frame(pc_rect, np.zeros((pc_rect.shape[0],)), pos_boxes)
+        # print('load boxes_2d', boxes_2d[0])
+        # print('load box obj', samples[0]['proposal_box'])
+        # print('load boxes_3d', show_boxes[0])
+        # self.viz_frame(pc_rect, np.zeros((pc_rect.shape[0],)), show_boxes[:1])
         return samples
 
-    def get_sample(self, pc_rect, image, calib, proposal, label=None):
+    def get_sample(self, pc_rect, image, calib, proposal_, label=None):
         # TODO: litmit y
         # expand proposal boxes
+        proposal = copy.deepcopy(proposal_)
         proposal.l += 1
-        proposal.h += 1
+        proposal.w += 1
         _, box_3d = utils.compute_box_3d(proposal, calib.P)
         _, mask = extract_pc_in_box3d(pc_rect, box_3d)
         if(np.sum(mask) == 0):
@@ -239,12 +241,17 @@ class Dataset(object):
         points_with_feats[:,4:6] = np.array([1, 0]) # one hot
 
         sample = {}
+        self.sample_id_counter += 1
+        sample['id'] = self.sample_id_counter
         sample['class'] = 0
         sample['pointcloud'] = points_with_feats
         sample['image'] = cv2.resize(image, (1200, 360))
-        sample['calib'] = calib.P
+        sample['calib'] = np.copy(calib.P)
+        # scale projection matrix
+        sample['calib'][0,:] *= (1200.0 / image.shape[1])
+        sample['calib'][1,:] *= (360.0 / image.shape[0])
         sample['proposal_box'] = np.array([proposal.t[0], proposal.t[1], proposal.t[2],
-            proposal.ry, proposal.h, proposal.w, proposal.l])
+            proposal.ry, proposal.l, proposal.h, proposal.w])
         sample['center_cls'] = np.zeros((2,), dtype=np.int32)
         sample['center_res'] = np.zeros((3,))
         sample['angle_cls'] = 0
@@ -255,6 +262,10 @@ class Dataset(object):
         if label:
             sample['class'] = g_type2onehotclass[label.type]
             obj_vec = obj_to_proposal_vec(label, proposal.t)
+            # test
+            # sample['proposal_box'] = np.array([label.t[0], label.t[1], label.t[2],
+            #     label.ry, label.l, label.h, label.w])
+
             sample['center_cls'] = obj_vec[0]
             sample['center_res'] = obj_vec[1]
             sample['angle_cls'] = obj_vec[2]
@@ -272,6 +283,14 @@ if __name__ == '__main__':
     split = sys.argv[2]
     dataset = Dataset(512, kitti_path, split)
     # dataset.load('./train', True)
+
+    sys.path.append('../models')
+    from collections import namedtuple
+    import tensorflow as tf
+    from img_vgg_pyramid import ImgVggPyr
+    import projection
+    VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
+
     produce_thread = threading.Thread(target=dataset.load, args=('./train',True))
     produce_thread.start()
     i = 0
@@ -281,10 +300,53 @@ if __name__ == '__main__':
         # total += np.sum(batch_data[1] == 1)
         # print('foreground points:', np.sum(batch_data[1] == 1))
         print(batch_data['ids'])
-        if i >= 10:
-        # if batch_data[-1]:
+        with tf.Session() as sess:
+            img_vgg = ImgVggPyr(VGG_config(**{
+                'vgg_conv1': [2, 32],
+                'vgg_conv2': [2, 64],
+                'vgg_conv3': [3, 128],
+                'vgg_conv4': [3, 256],
+                'l2_weight_decay': 0.0005
+            }))
+            img_pixel_size = np.asarray([360, 1200])
+            img_preprocessed = img_vgg.preprocess_input(batch_data['images'], img_pixel_size)
+            box2d_corners, box2d_corners_norm = projection.tf_project_to_image_space(
+                batch_data['prop_box'],
+                batch_data['calib'], img_pixel_size)
+
+            box2d_corners_norm_reorder = tf.stack([
+                tf.gather(box2d_corners_norm, 1, axis=-1),
+                tf.gather(box2d_corners_norm, 0, axis=-1),
+                tf.gather(box2d_corners_norm, 3, axis=-1),
+                tf.gather(box2d_corners_norm, 2, axis=-1),
+            ], axis=-1)
+            img_rois = tf.image.crop_and_resize(
+                img_preprocessed,
+                box2d_corners_norm_reorder, # reorder
+                tf.range(0, 1),
+                [100,100])
+            corners, corners_norm = sess.run([box2d_corners,box2d_corners_norm])
+            # break
+            whole_img = cv2.resize(batch_data['images'][0]/255, (1200,360))
+            # corner = corners[0].astype(int)
+            corner = (corners_norm[0] * np.array([1200,360,1200,360])).astype(int)
+            print('proposal box: ', batch_data['prop_box'][0])
+            print('projection matrix: ', batch_data['calib'][0])
+            print(corner, corners[0].astype(int))
+            cv2.rectangle(whole_img,(corner[0], corner[1]),(corner[2], corner[3]),(55,255,155),2)
+            cv2.imshow('img1', whole_img)
+
+            res = sess.run(img_rois)
+            # print(res[0]+98)
+            cv2.imshow('img', (res[0]+98)/255)
+            cv2.waitKey(0)
+        # break
+        # if i >= 10:
+        if is_last_batch:
             break
         i += 1
     dataset.stop_loading()
     print('stop loading')
     produce_thread.join()
+    '''
+    '''
