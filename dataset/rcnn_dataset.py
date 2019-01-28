@@ -16,13 +16,17 @@ sys.path.append(os.path.join(ROOT_DIR, 'kitti'))
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 sys.path.append(os.path.join(ROOT_DIR, 'visualize/mayavi'))
 from kitti_object import *
-from parameterize import obj_to_proposal_vec
 import kitti_util as utils
 from data_util import rotate_points_along_y, shift_point_cloud, extract_pc_in_box3d
 from data_util import ProposalObject, np_read_lines, find_match_label
 from data_conf import type_whitelist, difficulties_whitelist
 
 g_type2onehotclass = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
+NUM_HEADING_BIN = 12
+NUM_CENTER_BIN = 6
+CENTER_SEARCH_RANGE = 1.5
+
+box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, NUM_HEADING_BIN)
 
 class Dataset(object):
     def __init__(self, npoints, kitti_path, split, \
@@ -243,7 +247,7 @@ class Dataset(object):
         sample['gt_box'] = np.zeros((8,3))
         if label:
             sample['class'] = g_type2onehotclass[label.type]
-            obj_vec = obj_to_proposal_vec(label, proposal.t)
+            obj_vec = box_encoder.encode(label, proposal.t)
             # test
             # sample['proposal_box'] = np.array([label.t[0], label.t[1], label.t[2],
             #     label.ry, label.l, label.h, label.w])

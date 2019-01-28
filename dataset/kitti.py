@@ -16,10 +16,16 @@ sys.path.append(os.path.join(ROOT_DIR, 'kitti'))
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 sys.path.append(os.path.join(ROOT_DIR, 'visualize/mayavi'))
 from kitti_object import *
-from parameterize import obj_to_proposal_vec
+from box_encoder import BoxEncoder
 import kitti_util as utils
 from data_util import rotate_points_along_y, shift_point_cloud, extract_pc_in_box3d
 from data_conf import type_whitelist, difficulties_whitelist
+
+NUM_HEADING_BIN = 12
+NUM_CENTER_BIN = 12
+CENTER_SEARCH_RANGE = 3.0
+
+box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, NUM_HEADING_BIN)
 
 class Dataset(object):
     def __init__(self, npoints, kitti_path, split, \
@@ -212,7 +218,7 @@ class Dataset(object):
             if random_shift and False: # jitter object points
                 pc_rect[obj_idxs,:3] = shift_point_cloud(pc_rect[obj_idxs,:3], 0.02)
             for idx in obj_idxs:
-                proposal_of_point[idx] = obj_to_proposal_vec(obj, pc_rect[idx,:3])
+                proposal_of_point[idx] = box_encoder.encode(obj, pc_rect[idx,:3])
                 gt_box_of_point[idx] = obj_box_3d
         # self.viz_frame(pc_rect, seg_mask, gt_boxes)
         return pc_rect, seg_mask, proposal_of_point, gt_box_of_point, gt_boxes

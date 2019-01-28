@@ -9,11 +9,16 @@ sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 import tf_util
 from pointnet_util import pointnet_sa_module, pointnet_sa_module_msg, pointnet_fp_module
-from parameterize import NUM_HEADING_BIN, NUM_SIZE_CLUSTER, NUM_CENTER_BIN, NUM_OBJ_CLASSES, type_mean_size
-from model_util import huber_loss, get_3d_box_from_output, get_box3d_corners_helper
+from box_encoder import NUM_OBJ_CLASSES, type_mean_size, NUM_SIZE_CLUSTER
+from box_encoder import BoxEncoder
+from model_util import huber_loss, get_box3d_corners_helper
 import projection
 from img_vgg_pyramid import ImgVggPyr
 from collections import namedtuple
+
+NUM_HEADING_BIN = 12
+NUM_CENTER_BIN = 6
+CENTER_SEARCH_RANGE = 1.5
 
 class RCNN(object):
     def __init__(self, batch_size, num_point, num_channel=133, bn_decay=None, is_training=True):
@@ -24,6 +29,7 @@ class RCNN(object):
         self.is_training = is_training
         self.end_points = {}
         self.placeholders = self.get_placeholders()
+        self.box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, NUM_HEADING_BIN)
         self.build()
 
     def get_placeholders(self):
@@ -191,7 +197,7 @@ class RCNN(object):
             'center_y_residuals', 'heading_scores', 'heading_residuals_normalized',
             'size_scores', 'size_residuals_normalized']:
             end_points[k] = tf.expand_dims(self.end_points[k], axis=1)
-        box_center, box_angle, box_size = get_3d_box_from_output(end_points)
+        box_center, box_angle, box_size = self.box_encoder.tf_decode(end_points)
         box_center = tf.squeeze(box_center, axis=1)
         box_center = box_center + tf.slice(self.placeholders['proposal_boxes'], [0,0], [-1,3])
         box_angle = tf.squeeze(box_angle, axis=1)

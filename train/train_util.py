@@ -9,7 +9,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR,'utils'))
-from parameterize import class2angle, class2size, class2center, NUM_HEADING_BIN
 from box_util import box3d_iou, get_3d_box
 
 # ----------------------------------
