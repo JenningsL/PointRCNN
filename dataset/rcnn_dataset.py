@@ -132,39 +132,23 @@ class Dataset(object):
         fig = draw_gt_boxes3d(gt_boxes, fig, draw_text=False, color=(1, 1, 1))
         raw_input()
 
-    def load_proposals(self, idx, rpn_score_threshold=0.1):
-        proposals_file_path = os.path.join(self.proposal_dir, '%06d.txt'%(idx))
-        #roi_file_path = os.path.join(self.proposal_dir, '%06d_roi.txt'%(idx))
-        proposals_and_scores = np.loadtxt(proposals_file_path)
-        keep_idxs = np.arange(0, len(proposals_and_scores))
-        proposal_boxes_3d = proposals_and_scores[:, 0:7]
-        proposal_scores = proposals_and_scores[:, 7]
+    def load_proposals(self, data_idx):
+        # Generate proposals from labels for now
+        objects = self.kitti_dataset.get_label_objects(data_idx)
+        objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
+        proposals = []
+        avg_y = 0
+        for obj in objects:
+            center = obj.t + np.random.normal(0, 0.1, 3)
+            ry = obj.ry + np.random.normal(0, np.pi/8, 1)
+            l = obj.l + np.random.normal(0, 0.1, 1)[0]
+            h = obj.h + np.random.normal(0, 0.1, 1)[0]
+            w = obj.w + np.random.normal(0, 0.1, 1)[0]
+            proposals.append(ProposalObject(np.array([center[0],center[1],center[2],l, w, h, ry])))
+            avg_y += obj.t[1]
 
-        # Apply score mask to proposals
-        score_mask = proposal_scores > rpn_score_threshold
-        # 3D box in the format [x, y, z, l, w, h, ry]
-        proposal_boxes_3d = proposal_boxes_3d[score_mask]
-        keep_idxs = keep_idxs[score_mask]
-        proposal_objs = \
-            [ProposalObject(box_3d) for box_3d in proposal_boxes_3d]
-
-        boxes = []
-        box_scores = []
-        calib = self.kitti_dataset.get_calibration(idx)
-        for obj in proposal_objs:
-            _, corners = utils.compute_box_3d(obj, calib.P)
-            # corners_velo = calib.project_rect_to_velo(corners)
-            # boxes.append(corners_velo)
-            boxes.append(corners)
-            box_scores.append(obj.score)
-        #proposals_roi_features = np_read_lines(roi_file_path, keep_idxs)
-        proposal_scores = proposal_scores[keep_idxs]
-        #for obj, score, feat in zip(proposal_objs, proposal_scores, proposals_roi_features):
-        for obj, score in zip(proposal_objs, proposal_scores):
-            obj.score = score
-            obj.roi_features = None
-
-        return proposal_objs
+        # TODO: negative samples
+        return proposals
 
     def load_frame_data(self, data_idx_str,
         random_flip=False, random_rotate=False, random_shift=False):
@@ -196,7 +180,7 @@ class Dataset(object):
         proposals = self.load_proposals(data_idx)
         positive_samples = []
         negative_samples = []
-        # show_boxes = []
+        show_boxes = []
         # boxes_2d = []
         for prop in proposals:
             b2d,prop_box_3d = utils.compute_box_3d(prop, calib.P)
@@ -212,24 +196,21 @@ class Dataset(object):
                 if sample:
                     positive_samples.append(sample)
                     # boxes_2d.append(b2d)
-                    # show_boxes.append(prop_box_3d)
+                    show_boxes.append(prop_box_3d)
         #print('positive:', len(positive_samples))
         #print('negative:', len(negative_samples))
         random.shuffle(negative_samples)
         samples = positive_samples + negative_samples[:len(positive_samples)]
         random.shuffle(samples)
-        # print('load boxes_2d', boxes_2d[0])
-        # print('load box obj', samples[0]['proposal_box'])
-        # print('load boxes_3d', show_boxes[0])
-        # self.viz_frame(pc_rect, np.zeros((pc_rect.shape[0],)), show_boxes[:1])
+        # self.viz_frame(pc_rect, np.zeros((pc_rect.shape[0],)), show_boxes)
         return samples
 
     def get_sample(self, pc_rect, image, calib, proposal_, label=None):
         # TODO: litmit y
         # expand proposal boxes
         proposal = copy.deepcopy(proposal_)
-        proposal.l += 1
-        proposal.w += 1
+        # proposal.l += 1
+        # proposal.w += 1
         _, box_3d = utils.compute_box_3d(proposal, calib.P)
         _, mask = extract_pc_in_box3d(pc_rect, box_3d)
         if(np.sum(mask) == 0):
@@ -283,7 +264,7 @@ if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
     dataset = Dataset(512, kitti_path, split)
-    # dataset.load('./train', True)
+    dataset.load('./train', True)
 
     sys.path.append('../models')
     from collections import namedtuple
