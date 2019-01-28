@@ -59,15 +59,9 @@ class Dataset(object):
             frame_id = self.frame_ids[i]
             #print('loading ' + frame_id)
             for x in range(self.AUG_X):
-                frame_data = {}
-                pc, mask, proposal_of_point, gt_box_of_point, gt_boxes = \
+                frame_data = \
                     self.load_frame_data(frame_id, random_flip=aug, random_rotate=aug, random_shift=aug)
                 frame_data['frame_id'] = frame_id
-                frame_data['pointcloud'] = pc
-                frame_data['mask_label'] = mask
-                frame_data['proposal_of_point'] = self.get_proposal_out(proposal_of_point)
-                frame_data['gt_box_of_point'] = self.get_gt_box_of_points(gt_box_of_point)
-                frame_data['gt_boxes'] = gt_boxes
                 self.data_buffer.put(frame_data)
             i = (i + 1) % len(self.frame_ids)
 
@@ -107,56 +101,51 @@ class Dataset(object):
         is_last_batch = False
         total_batch = len(self.frame_ids)*self.AUG_X / bsize
 
-        batch_ids = []
-        batch_data = np.zeros((bsize, self.npoints, self.num_channel))
-        batch_label = np.zeros((bsize, self.npoints), dtype=np.int32)
-        # proposal output for each point
-        batch_objectness = np.zeros((bsize, self.npoints), dtype=np.int32)
-        batch_center_x_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
-        batch_center_z_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
-        batch_center_x_res = np.zeros((bsize, self.npoints), dtype=np.float32)
-        batch_center_y_res = np.zeros((bsize, self.npoints), dtype=np.float32)
-        batch_center_z_res = np.zeros((bsize, self.npoints), dtype=np.float32)
-        batch_angle_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
-        batch_size_cls = np.zeros((bsize, self.npoints), dtype=np.int32)
-        batch_angle_res = np.zeros((bsize, self.npoints), dtype=np.float32)
-        batch_size_res = np.zeros((bsize, self.npoints, 3), dtype=np.float32)
-        batch_gt_box_of_point = np.zeros((bsize, self.npoints, 8, 3), dtype=np.float32)
-        batch_gt_boxes = []
+        batch = {
+            'ids': [],
+            'pointcloud': np.zeros((bsize, self.npoints, self.num_channel), dtype=np.float32),
+            'images': np.zeros((bsize, 360, 1200, 3), dtype=np.float32),
+            'calib': np.zeros((bsize, 3, 4), dtype=np.float32),
+            'seg_label': np.zeros((bsize, self.npoints), dtype=np.int32),
+            'prop_box': np.zeros((bsize, 7), dtype=np.float32),
+            'center_x_cls': np.zeros((bsize,self.npoints), dtype=np.int32),
+            'center_z_cls': np.zeros((bsize,self.npoints), dtype=np.int32),
+            'center_x_res': np.zeros((bsize,self.npoints), dtype=np.float32),
+            'center_y_res': np.zeros((bsize,self.npoints), dtype=np.float32),
+            'center_z_res': np.zeros((bsize,self.npoints), dtype=np.float32),
+            'angle_cls': np.zeros((bsize,self.npoints), dtype=np.int32),
+            'size_cls': np.zeros((bsize,self.npoints), dtype=np.int32),
+            'angle_res': np.zeros((bsize,self.npoints), dtype=np.float32),
+            'size_res': np.zeros((bsize, self.npoints, 3), dtype=np.float32),
+            'gt_box_of_point': np.zeros((bsize, self.npoints, 8, 3), dtype=np.float32),
+            'gt_boxes': []
+        }
         for i in range(bsize):
             frame = self.data_buffer.get()
-            batch_ids.append(frame['frame_id'])
+            batch['ids'].append(frame['frame_id'])
             objectness, center_cls, center_res, angle_cls, angle_res, size_cls, size_res = \
                 frame['proposal_of_point']
-            batch_data[i,...] = frame['pointcloud']
-            batch_label[i,:] = frame['mask_label']
-            batch_center_x_cls[i,...] = center_cls[:,0]
-            batch_center_z_cls[i,...] = center_cls[:,1]
-            batch_center_x_res[i,...] = center_res[:,0]
-            batch_center_y_res[i,...] = center_res[:,1]
-            batch_center_z_res[i,...] = center_res[:,2]
-            batch_angle_cls[i,...] = angle_cls
-            batch_size_cls[i,...] = size_cls
+            batch['pointcloud'][i,...] = frame['pointcloud']
+            batch['seg_label'][i,:] = frame['mask_label']
+            batch['center_x_cls'][i,...] = center_cls[:,0]
+            batch['center_z_cls'][i,...] = center_cls[:,1]
+            batch['center_x_res'][i,...] = center_res[:,0]
+            batch['center_y_res'][i,...] = center_res[:,1]
+            batch['center_z_res'][i,...] = center_res[:,2]
+            batch['angle_cls'][i,...] = angle_cls
+            batch['size_cls'][i,...] = size_cls
             # batch_center_res[i,...] = center_res
-            batch_angle_res[i,...] = angle_res
-            batch_size_res[i,...] = size_res
-            batch_gt_box_of_point[i,...] = frame['gt_box_of_point']
-            batch_gt_boxes.append(frame['gt_boxes'])
+            batch['angle_res'][i,...] = angle_res
+            batch['size_res'][i,...] = size_res
+            batch['gt_box_of_point'][i,...] = frame['gt_box_of_point']
+            batch['gt_boxes'].append(frame['gt_boxes'])
         if self.batch_idx == total_batch - 1:
             is_last_batch = True
             self.batch_idx = 0
             random.shuffle(self.frame_ids)
         else:
             self.batch_idx += 1
-        if need_id:
-            return batch_data, batch_label, batch_center_x_cls,\
-                batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
-                batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
-                batch_size_res, batch_gt_boxes, batch_gt_box_of_point, batch_ids, is_last_batch
-        return batch_data, batch_label, batch_center_x_cls,\
-            batch_center_z_cls, batch_center_x_res, batch_center_y_res, \
-            batch_center_z_res, batch_angle_cls, batch_angle_res, batch_size_cls, \
-            batch_size_res, batch_gt_boxes, batch_gt_box_of_point, is_last_batch
+        return batch, is_last_batch
 
     def viz_frame(self, pc_rect, mask, gt_boxes):
         import mayavi.mlab as mlab
@@ -221,7 +210,19 @@ class Dataset(object):
                 proposal_of_point[idx] = box_encoder.encode(obj, pc_rect[idx,:3])
                 gt_box_of_point[idx] = obj_box_3d
         # self.viz_frame(pc_rect, seg_mask, gt_boxes)
-        return pc_rect, seg_mask, proposal_of_point, gt_box_of_point, gt_boxes
+        # return pc_rect, seg_mask, proposal_of_point, gt_box_of_point, gt_boxes
+        calib_matrix = np.copy(calib.P)
+        calib_matrix[0,:] *= (1200.0 / image.shape[1])
+        calib_matrix[1,:] *= (360.0 / image.shape[0])
+        return {
+            'pointcloud': pc_rect,
+            'image': cv2.resize(image, (1200, 360)),
+            'calib': calib_matrix,
+            'mask_label': seg_mask,
+            'proposal_of_point': self.get_proposal_out(proposal_of_point),
+            'gt_box_of_point': self.get_gt_box_of_points(gt_box_of_point),
+            'gt_boxes': gt_boxes
+        }
 
 if __name__ == '__main__':
     kitti_path = sys.argv[1]

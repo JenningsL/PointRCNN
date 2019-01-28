@@ -16,6 +16,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 from kitti import Dataset
 from model_util import NUM_FG_POINT
+from rpn import RPN
 import train_util
 
 parser = argparse.ArgumentParser()
@@ -46,12 +47,8 @@ OPTIMIZER = FLAGS.optimizer
 DECAY_STEP = FLAGS.decay_step
 DECAY_RATE = FLAGS.decay_rate
 
-MODEL = importlib.import_module(FLAGS.model) # import network module
-MODEL_FILE = os.path.join(ROOT_DIR, 'models', FLAGS.model+'.py')
 LOG_DIR = FLAGS.log_dir
 if not os.path.exists(LOG_DIR): os.mkdir(LOG_DIR)
-os.system('cp %s %s' % (MODEL_FILE, LOG_DIR)) # bkp of model def
-os.system('cp %s %s' % (os.path.join(BASE_DIR, 'train.py'), LOG_DIR))
 LOG_FOUT = open(os.path.join(LOG_DIR, 'log_train.txt'), 'w')
 LOG_FOUT.write(str(FLAGS)+'\n')
 
@@ -98,14 +95,10 @@ def train():
 
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            pointclouds_pl, mask_labels_pl, \
-            center_bin_x_pl, center_bin_z_pl,\
-            center_x_residuals_pl, center_z_residuals_pl, center_y_residuals_pl, heading_bin_pl,\
-            heading_residuals_pl, size_class_pl, size_residuals_pl, \
-            gt_boxes_pl, gt_box_of_point_pl \
-                = MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
+            rpn_model = RPN(BATCH_SIZE, NUM_POINT, NUM_CHANNEL=4, is_training=True)
+            placeholders = rpn_model.placeholders
 
-            is_training_pl = tf.placeholder(tf.bool, shape=())
+            # is_training_pl = tf.placeholder(tf.bool, shape=())
 
             # Note the global_step=batch parameter to minimize.
             # That tells the optimizer to increment the 'batch' parameter
@@ -116,28 +109,10 @@ def train():
             tf.summary.scalar('bn_decay', bn_decay)
 
             # Get model and losses
-            end_points = {}
-            labels_pl = {
-                'mask_label': mask_labels_pl,
-                'center_bin_x': center_bin_x_pl,
-                'center_bin_z': center_bin_z_pl,
-                'center_x_residuals': center_x_residuals_pl,
-                'center_z_residuals': center_z_residuals_pl,
-                'center_y_residuals': center_y_residuals_pl,
-                'heading_bin': heading_bin_pl,
-                'heading_residuals': heading_residuals_pl,
-                'size_class': size_class_pl,
-                'size_residuals': size_residuals_pl,
-                'gt_box_of_point': gt_box_of_point_pl,
-                'gt_boxes': gt_boxes_pl
-            }
-            end_points = MODEL.get_model(pointclouds_pl, labels_pl,
-                is_training_pl, bn_decay, end_points)
-            loss, loss_endpoints = MODEL.get_loss(labels_pl, end_points)
+            end_points = rpn_model.end_points
+            loss, loss_endpoints = rpn_model.get_loss()
 
             iou2ds, iou3ds = tf.py_func(train_util.compute_box3d_iou, [
-                    #tf.reshape(end_points['proposal_boxes'], [BATCH_SIZE*NUM_FG_POINT,8,3]),
-                    #tf.reshape(end_points['gt_box_of_point'], [BATCH_SIZE*NUM_FG_POINT,8,3])
                     end_points['proposal_boxes'],
                     end_points['gt_box_of_point'],
                     end_points['nms_indices']
@@ -182,15 +157,12 @@ def train():
             saver.restore(sess, FLAGS.restore_model_path)
 
         ops = {
-            'pointclouds_pl': pointclouds_pl,
-            'is_training_pl': is_training_pl,
             'loss': loss,
             'train_op': train_op,
             'step': batch,
             'merged': merged,
             'loss_endpoints': loss_endpoints,
             'end_points': end_points}
-        ops.update(labels_pl)
 
         for epoch in range(MAX_EPOCH):
             log_string('**** EPOCH %03d ****' % (epoch))
@@ -199,7 +171,7 @@ def train():
             #eval_iou_recall = (epoch % 10 == 0 and epoch != 0)
             #eval_iou_recall = True
             eval_iou_recall = (epoch > 10 and epoch % 2 == 0)
-            train_one_epoch(sess, ops, train_writer, eval_iou_recall)
+            train_one_epoch(sess, ops, placeholders, train_writer, eval_iou_recall)
             #if epoch % 3 == 0:
             # Save the variables to disk.
             # if val_loss < best_val_loss:
@@ -209,14 +181,14 @@ def train():
             save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
             log_string("Model saved in file: {0}".format(save_path))
             if eval_iou_recall:
-                val_loss = eval_one_epoch(sess, ops, test_writer, eval_iou_recall)
+                val_loss = eval_one_epoch(sess, ops, placeholders, test_writer, eval_iou_recall)
     TRAIN_DATASET.stop_loading()
     TEST_DATASET.stop_loading()
     train_produce_thread.join()
     test_produce_thread.join()
 
 
-def train_one_epoch(sess, ops, train_writer, more=False):
+def train_one_epoch(sess, ops, pls, train_writer, more=False):
     is_training = True
     log_string(str(datetime.now()))
 
@@ -235,28 +207,24 @@ def train_one_epoch(sess, ops, train_writer, more=False):
     # Training with batches
     batch_idx = 0
     while(True):
-        batch_pc, batch_mask_label, \
-        batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
-        batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
-        batch_heading_residuals, batch_size_class, batch_size_residuals, batch_gt_boxes, \
-        batch_gt_box_of_point, is_last_batch \
-        = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
+        batch_data, is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {
-            ops['pointclouds_pl']: batch_pc,
-            ops['mask_label']: batch_mask_label,
-            ops['center_bin_x']: batch_center_bin_x,
-            ops['center_bin_z']: batch_center_bin_z,
-            ops['center_x_residuals']: batch_center_x_residuals,
-            ops['center_y_residuals']: batch_center_y_residuals,
-            ops['center_z_residuals']: batch_center_z_residuals,
-            ops['heading_bin']: batch_heading_bin,
-            ops['heading_residuals']: batch_heading_residuals,
-            ops['size_class']: batch_size_class,
-            ops['size_residuals']: batch_size_residuals,
-            ops['gt_box_of_point']: batch_gt_box_of_point,
-            #ops['gt_boxes']: batch_gt_boxes,
-            ops['is_training_pl']: is_training,
+            pls['pointclouds']: batch_data['pointcloud'],
+            pls['img_inputs']: batch_data['images'],
+            pls['calib']: batch_data['calib'],
+            pls['seg_labels']: batch_data['seg_label'],
+            pls['center_bin_x_labels']: batch_data['center_x_cls'],
+            pls['center_bin_z_labels']: batch_data['center_z_cls'],
+            pls['center_x_residuals_labels']: batch_data['center_x_res'],
+            pls['center_y_residuals_labels']: batch_data['center_y_res'],
+            pls['center_z_residuals_labels']: batch_data['center_z_res'],
+            pls['heading_bin_labels']: batch_data['angle_cls'],
+            pls['heading_residuals_labels']: batch_data['angle_res'],
+            pls['size_class_labels']: batch_data['size_cls'],
+            pls['size_residuals_labels']: batch_data['size_res'],
+            pls['gt_box_of_point']: batch_data['gt_box_of_point'],
+            pls['is_training_pl']: is_training,
         }
         if more:
             summary, step, loss_val, _, logits_val, iou2ds, iou3ds, proposal_boxes, nms_indices \
@@ -345,27 +313,24 @@ def eval_one_epoch(sess, ops, test_writer, more=False):
     total_proposal_recall = 0
 
     while(True):
-        batch_pc, batch_mask_label, \
-        batch_center_bin_x, batch_center_bin_z, batch_center_x_residuals, \
-        batch_center_y_residuals, batch_center_z_residuals, batch_heading_bin, \
-        batch_heading_residuals, batch_size_class, batch_size_residuals, batch_gt_boxes, \
-        batch_gt_box_of_point, is_last_batch \
-        = TEST_DATASET.get_next_batch(BATCH_SIZE)
+        batch_data, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {
-            ops['pointclouds_pl']: batch_pc,
-            ops['mask_label']: batch_mask_label,
-            ops['center_bin_x']: batch_center_bin_x,
-            ops['center_bin_z']: batch_center_bin_z,
-            ops['center_x_residuals']: batch_center_x_residuals,
-            ops['center_y_residuals']: batch_center_y_residuals,
-            ops['center_z_residuals']: batch_center_z_residuals,
-            ops['heading_bin']: batch_heading_bin,
-            ops['heading_residuals']: batch_heading_residuals,
-            ops['size_class']: batch_size_class,
-            ops['size_residuals']: batch_size_residuals,
-            ops['gt_box_of_point']: batch_gt_box_of_point,
-            ops['is_training_pl']: is_training,
+            pls['pointclouds']: batch_data['pointcloud'],
+            pls['img_inputs']: batch_data['images'],
+            pls['calib']: batch_data['calib'],
+            pls['seg_labels']: batch_data['seg_label'],
+            pls['center_bin_x_labels']: batch_data['center_x_cls'],
+            pls['center_bin_z_labels']: batch_data['center_z_cls'],
+            pls['center_x_residuals_labels']: batch_data['center_x_res'],
+            pls['center_y_residuals_labels']: batch_data['center_y_res'],
+            pls['center_z_residuals_labels']: batch_data['center_z_res'],
+            pls['heading_bin_labels']: batch_data['angle_cls'],
+            pls['heading_residuals_labels']: batch_data['angle_res'],
+            pls['size_class_labels']: batch_data['size_cls'],
+            pls['size_residuals_labels']: batch_data['size_res'],
+            pls['gt_box_of_point']: batch_data['gt_box_of_point'],
+            pls['is_training_pl']: is_training,
         }
 
         if more:
