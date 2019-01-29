@@ -17,6 +17,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 sys.path.append(os.path.join(ROOT_DIR, 'visualize/mayavi'))
 from kitti_object import *
 import kitti_util as utils
+from box_encoder import BoxEncoder
 from data_util import rotate_points_along_y, shift_point_cloud, extract_pc_in_box3d
 from data_util import ProposalObject, np_read_lines, find_match_label
 from data_conf import type_whitelist, difficulties_whitelist

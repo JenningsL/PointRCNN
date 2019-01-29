@@ -3,6 +3,7 @@ from __future__ import print_function
 import sys
 import os
 import tensorflow as tf
+slim = tf.contrib.slim
 import numpy as np
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
@@ -10,10 +11,13 @@ sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 import tf_util
 from pointnet_util import pointnet_sa_module, pointnet_sa_module_msg, pointnet_fp_module
-from model_util import point_cloud_masking
+from model_util import point_cloud_masking, get_box3d_corners_helper, focal_loss, huber_loss
 from model_util import NUM_FG_POINT
-from box_encoder import NUM_SIZE_CLUSTER
+from box_encoder import NUM_SIZE_CLUSTER, type_mean_size
 from box_encoder import BoxEncoder
+import projection
+from img_vgg_pyramid import ImgVggPyr
+from collections import namedtuple
 
 NUM_HEADING_BIN = 12
 NUM_CENTER_BIN = 12
@@ -99,7 +103,7 @@ class RPN(object):
         end_points['size_residuals_normalized'] = size_residuals_normalized
         # end_points['size_residuals'] = size_residuals_normalized * \
         #     tf.expand_dims(tf.constant(type_mean_size, dtype=tf.float32), 0)
-        box_center, box_angle, box_size = box_encoder.tf_decode(end_points)
+        box_center, box_angle, box_size = self.box_encoder.tf_decode(end_points)
         box_center = box_center + end_points['fg_points_xyz']
         box_num = batch_size * npoints
         corners_3d = get_box3d_corners_helper(
@@ -270,10 +274,10 @@ class RPN(object):
         end_points = self.end_points
 
         img_bottleneck = self.build_img_extractor() # (B,360,1200,C)
-        pts2d = projection.tf_rect_to_image(point_cloud, self.placeholders['calib'])
+        pts2d = projection.tf_rect_to_image(tf.slice(point_cloud,[0,0,0],[-1,-1,3]), self.placeholders['calib'])
         pts2d = tf.cast(pts2d, tf.int32) #(B,N,2)
         indices = tf.concat([
-            tf.expand_dims(tf.tile(tf.range(0, self.batch_size), self.num_point), axis=-1), # (B*N, 1)
+            tf.expand_dims(tf.tile(tf.range(0, self.batch_size), [self.num_point]), axis=-1), # (B*N, 1)
             tf.reshape(pts2d, [self.batch_size*self.num_point, 2])
         ], axis=-1) # (B*N,3)
         end_points['point_img_feats'] = tf.reshape(
@@ -301,7 +305,7 @@ class RPN(object):
         end_points = self.end_points
         batch_size = self.batch_size
         # 3D Segmentation loss
-        mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(labels['mask_label'], 2, axis=-1))
+        mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(pls['seg_labels'], 2, axis=-1))
         tf.summary.scalar('mask loss', mask_loss)
         # gather box estimation labels of foreground points
         labels_fg = {}
@@ -310,8 +314,8 @@ class RPN(object):
                 'center_z_residuals_labels','center_y_residuals_labels','heading_bin_labels',
                 'heading_residuals_labels','size_class_labels','size_residuals_labels',]:
                 continue
-            labels_fg[k] = tf.gather_nd(labels[k], end_points['fg_point_indices'])
-            if k == 'size_residuals':
+            labels_fg[k] = tf.gather_nd(pls[k], end_points['fg_point_indices'])
+            if k == 'size_residuals_labels':
                 labels_fg[k].set_shape([batch_size, NUM_FG_POINT, 3])
             else:
                 labels_fg[k].set_shape([batch_size, NUM_FG_POINT])

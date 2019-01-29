@@ -95,7 +95,7 @@ def train():
 
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            rpn_model = RPN(BATCH_SIZE, NUM_POINT, NUM_CHANNEL=4, is_training=True)
+            rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=True)
             placeholders = rpn_model.placeholders
 
             # is_training_pl = tf.placeholder(tf.bool, shape=())

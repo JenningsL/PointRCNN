@@ -73,16 +73,16 @@ class RCNN(object):
                 self._img_preprocessed,
                 self._img_pixel_size,
                 self.is_training)
-        return self.img_feature_maps
-        '''
+        #return self.img_feature_maps
         self.img_bottleneck = slim.conv2d(
             self.img_feature_maps,
-            1, [1, 1],
+            2, [1, 1],
             scope='bottleneck',
             normalizer_fn=slim.batch_norm,
             normalizer_params={
                 'is_training': self.is_training})
         return self.img_bottleneck
+        '''
         '''
 
     def build(self):
@@ -98,7 +98,7 @@ class RCNN(object):
             img_bottleneck,
             box2d_corners_norm,
             tf.range(0, batch_size),
-            [7,7])
+            [16,16])
 
         l0_xyz = tf.slice(point_cloud, [0,0,0], [-1,-1,3])
         l0_points = tf.slice(point_cloud, [0,0,3], [-1,-1,self.num_channel-3])
@@ -121,7 +121,8 @@ class RCNN(object):
         feats = tf.concat([point_feats, img_feats], axis=-1)
 
         # Classification
-        cls_net = tf_util.fully_connected(img_feats, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
+        #cls_net = tf_util.fully_connected(img_feats, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
+        cls_net = tf_util.fully_connected(feats, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
         cls_net = tf_util.dropout(cls_net, keep_prob=0.5, is_training=is_training, scope='rcnn-cls-dp1')
         cls_net = tf_util.fully_connected(cls_net, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc2', bn_decay=self.bn_decay)
         cls_net = tf_util.dropout(cls_net, keep_prob=0.5, is_training=is_training, scope='rcnn-cls-dp2')
