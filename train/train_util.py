@@ -63,6 +63,8 @@ def compute_proposal_recall(batch_pred_boxes, batch_gt_boxes, nms_indices, iou_t
                     break
         total_recall += np.sum(recall)
         total_labels += len(gt_boxes)
+    if total_labels == 0:
+        return 1.0
     return float(total_recall) / total_labels
 
 if __name__ == '__main__':

@@ -47,7 +47,7 @@ class Dataset(object):
         self.batch_idx = 0
         # preloading
         self.stop = False
-        self.data_buffer = Queue(maxsize=128)
+        self.data_buffer = Queue(maxsize=64)
 
     def load_split_ids(self, split):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:

@@ -6,6 +6,7 @@ import argparse
 import importlib
 import numpy as np
 import tensorflow as tf
+slim = tf.contrib.slim
 import pickle
 from threading import Thread
 from datetime import datetime
@@ -94,10 +95,9 @@ def train():
     test_produce_thread.start()
 
     with tf.Graph().as_default():
-        with tf.device('/gpu:'+str(GPU_INDEX)):
-            rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=True)
-            placeholders = rpn_model.placeholders
-
+        rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=True)
+        placeholders = rpn_model.placeholders
+        with tf.device('/gpu:0'):
             # is_training_pl = tf.placeholder(tf.bool, shape=())
 
             # Note the global_step=batch parameter to minimize.
@@ -132,7 +132,12 @@ def train():
             # Note: when training, the moving_mean and moving_variance need to be updated.
             update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
             with tf.control_dependencies(update_ops):
-                train_op = optimizer.minimize(loss, global_step=batch)
+                #train_op = optimizer.minimize(loss, global_step=batch)
+                train_op = slim.learning.create_train_op(
+                    loss,
+                    optimizer,
+                    clip_gradient_norm=1.0,
+                    global_step=batch)
 
             # Add ops to save and restore all the variables.
             saver = tf.train.Saver()
@@ -168,9 +173,8 @@ def train():
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
             # eval iou and recall is slow
-            #eval_iou_recall = (epoch % 10 == 0 and epoch != 0)
-            #eval_iou_recall = True
-            eval_iou_recall = (epoch > 10 and epoch % 2 == 0)
+            #eval_iou_recall = (epoch > 10 and epoch % 2 == 0)
+            eval_iou_recall = epoch % 2 == 0
             train_one_epoch(sess, ops, placeholders, train_writer, eval_iou_recall)
             #if epoch % 3 == 0:
             # Save the variables to disk.
@@ -237,7 +241,7 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
             iou3ds_sum += np.sum(iou3ds)
             total_nms += len(iou2ds)
             # average on each frame
-            proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes, nms_indices)
+            proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_data['gt_boxes'], nms_indices)
             total_proposal_recall += proposal_recall * BATCH_SIZE
         else:
             summary, step, loss_val, _, logits_val = sess.run([
@@ -248,10 +252,10 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
 
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
-        correct = np.sum(preds_val == batch_mask_label)
-        tp = np.sum(np.logical_and(preds_val == batch_mask_label, batch_mask_label == 1))
-        fp = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 0))
-        fn = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 1))
+        correct = np.sum(preds_val == batch_data['seg_label'])
+        tp = np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] == 1))
+        fp = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 0))
+        fn = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 1))
         total_correct += correct
         total_tp += tp
         total_fp += fp
@@ -293,7 +297,7 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
         batch_idx += 1
 
 
-def eval_one_epoch(sess, ops, test_writer, more=False):
+def eval_one_epoch(sess, ops, pls, test_writer, more=False):
     global EPOCH_CNT
     is_training = False
     log_string(str(datetime.now()))
@@ -345,7 +349,7 @@ def eval_one_epoch(sess, ops, test_writer, more=False):
             iou3ds_sum += np.sum(iou3ds)
             total_nms += len(iou2ds)
             # average on each frame
-            proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes, nms_indices)
+            proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_data['gt_boxes'], nms_indices)
             total_proposal_recall += proposal_recall * BATCH_SIZE
         else:
             summary, step, loss_val, logits_val = sess.run([
@@ -355,10 +359,10 @@ def eval_one_epoch(sess, ops, test_writer, more=False):
 
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
-        correct = np.sum(preds_val == batch_mask_label)
-        tp = np.sum(np.logical_and(preds_val == batch_mask_label, batch_mask_label == 1))
-        fp = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 0))
-        fn = np.sum(np.logical_and(preds_val != batch_mask_label, batch_mask_label == 1))
+        correct = np.sum(preds_val == batch_data['seg_label'])
+        tp = np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] == 1))
+        fp = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 0))
+        fn = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 1))
         total_tp += tp
         total_fp += fp
         total_fn += fn

@@ -132,7 +132,8 @@ class RPN(object):
 
         self.img_bottleneck = slim.conv2d(
             self.img_feature_maps,
-            128, [1, 1],
+            #128, [1, 1],
+            1, [1, 1],
             scope='bottleneck',
             normalizer_fn=slim.batch_norm,
             normalizer_params={
@@ -273,31 +274,33 @@ class RPN(object):
         bn_decay = self.bn_decay
         end_points = self.end_points
 
-        img_bottleneck = self.build_img_extractor() # (B,360,1200,C)
-        pts2d = projection.tf_rect_to_image(tf.slice(point_cloud,[0,0,0],[-1,-1,3]), self.placeholders['calib'])
-        pts2d = tf.cast(pts2d, tf.int32) #(B,N,2)
-        indices = tf.concat([
-            tf.expand_dims(tf.tile(tf.range(0, self.batch_size), [self.num_point]), axis=-1), # (B*N, 1)
-            tf.reshape(pts2d, [self.batch_size*self.num_point, 2])
-        ], axis=-1) # (B*N,3)
-        end_points['point_img_feats'] = tf.reshape(
-            tf.gather_nd(img_bottleneck, pts2d), # (B*N,C)
-            [self.batch_size, self.num_point, -1])  # (B,N,C)
+        with tf.device('/gpu:1'):
+            img_bottleneck = self.build_img_extractor() # (B,360,1200,C)
+            pts2d = projection.tf_rect_to_image(tf.slice(point_cloud,[0,0,0],[-1,-1,3]), self.placeholders['calib'])
+            pts2d = tf.cast(pts2d, tf.int32) #(B,N,2)
+            indices = tf.concat([
+                tf.expand_dims(tf.tile(tf.range(0, self.batch_size), [self.num_point]), axis=-1), # (B*N, 1)
+                tf.reshape(pts2d, [self.batch_size*self.num_point, 2])
+            ], axis=-1) # (B*N,3)
+            end_points['point_img_feats'] = tf.reshape(
+                tf.gather_nd(img_bottleneck, pts2d), # (B*N,C)
+                [self.batch_size, self.num_point, -1])  # (B,N,C)
 
-        end_points = self.get_segmentation_net(point_cloud, is_training, bn_decay, end_points)
-        foreground_logits = tf.cond(is_training, lambda: tf.one_hot(mask_label, 2), lambda: end_points['foreground_logits'])
-        # fg_point_feats include xyz
-        fg_point_feats, end_points = point_cloud_masking(
-            end_points['point_feats_fuse'], foreground_logits,
-            end_points, xyz_only=False) # BxNUM_FG_POINTxD
-        proposals = self.get_region_proposal_net(fg_point_feats, is_training, bn_decay, end_points)
-        proposals_reshaped = tf.reshape(proposals, [self.batch_size, NUM_FG_POINT, -1])
-        # Parse output to 3D box parameters
-        end_points = self.parse_output_to_tensors(proposals_reshaped, end_points)
-        end_points = self.reduce_proposals(end_points)
-        # for iou eval
-        end_points['gt_box_of_point'] = tf.gather_nd(self.placeholders['gt_box_of_point'], end_points['fg_point_indices'])
-        end_points['gt_box_of_point'].set_shape([self.batch_size, NUM_FG_POINT, 8, 3])
+        with tf.device('/gpu:0'):
+            end_points = self.get_segmentation_net(point_cloud, is_training, bn_decay, end_points)
+            foreground_logits = tf.cond(is_training, lambda: tf.one_hot(mask_label, 2), lambda: end_points['foreground_logits'])
+            # fg_point_feats include xyz
+            fg_point_feats, end_points = point_cloud_masking(
+                end_points['point_feats_fuse'], foreground_logits,
+                end_points, xyz_only=False) # BxNUM_FG_POINTxD
+            proposals = self.get_region_proposal_net(fg_point_feats, is_training, bn_decay, end_points)
+            proposals_reshaped = tf.reshape(proposals, [self.batch_size, NUM_FG_POINT, -1])
+            # Parse output to 3D box parameters
+            end_points = self.parse_output_to_tensors(proposals_reshaped, end_points)
+            end_points = self.reduce_proposals(end_points)
+            # for iou eval
+            end_points['gt_box_of_point'] = tf.gather_nd(self.placeholders['gt_box_of_point'], end_points['fg_point_indices'])
+            end_points['gt_box_of_point'].set_shape([self.batch_size, NUM_FG_POINT, 8, 3])
         return end_points
 
     def get_loss(self):
