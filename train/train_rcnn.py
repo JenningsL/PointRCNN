@@ -85,12 +85,15 @@ def get_bn_decay(batch):
     return bn_decay
 
 TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train')
+TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
 
 def train():
     ''' Main function for training and simple evaluation. '''
     # data loading threads
     train_produce_thread = Thread(target=TRAIN_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train', True))
     train_produce_thread.start()
+    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val', False))
+    test_produce_thread.start()
 
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
@@ -172,6 +175,8 @@ def train():
             val_loss = eval_one_epoch(sess, ops, pls, test_writer)
     TRAIN_DATASET.stop_loading()
     train_produce_thread.join()
+    TEST_DATASET.stop_loading()
+    test_produce_thread.join()
 
 
 def train_one_epoch(sess, ops, pls, train_writer):
@@ -193,7 +198,7 @@ def train_one_epoch(sess, ops, pls, train_writer):
     # Training with batches
     batch_idx = 0
     while(True):
-        batch_data, is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
+        batch_data, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {
             pls['pointclouds']: batch_data['pointcloud'],
