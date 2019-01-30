@@ -169,7 +169,7 @@ def train():
             train_one_epoch(sess, ops, placeholders, train_writer)
             save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
             log_string("Model saved in file: {0}".format(save_path))
-            # val_loss = eval_one_epoch(sess, ops, test_writer, eval_iou_recall)
+            val_loss = eval_one_epoch(sess, ops, pls, test_writer)
     TRAIN_DATASET.stop_loading()
     train_produce_thread.join()
 
@@ -187,8 +187,8 @@ def train_one_epoch(sess, ops, pls, train_writer):
     loss_sum = 0
     iou2ds_sum = 0
     iou3ds_sum = 0
-    total_nms = 0
-    total_proposal_recall = 0
+    total_pos = 0
+    total_box_correct = 0
 
     # Training with batches
     batch_idx = 0
@@ -221,10 +221,8 @@ def train_one_epoch(sess, ops, pls, train_writer):
             ops['end_points']['output_boxes']], feed_dict=feed_dict)
         iou2ds_sum += np.sum(iou2ds)
         iou3ds_sum += np.sum(iou3ds)
-        total_nms += len(iou2ds)
-        # average on each frame
-        # proposal_recall = train_util.compute_proposal_recall(proposal_boxes, batch_gt_boxes, nms_indices)
-        # total_proposal_recall += proposal_recall * BATCH_SIZE
+        total_pos += len(iou2ds)
+        total_box_correct += np.sum(iou3ds > 0.7)
 
         if np.isnan(loss_val):
             loss_endpoints = sess.run(ops['loss_endpoints'], feed_dict=feed_dict)
@@ -250,16 +248,16 @@ def train_one_epoch(sess, ops, pls, train_writer):
             log_string(' -- %03d --' % (batch_idx+1))
             log_string('mean loss: %f' % (loss_sum / sample_num))
             if total_seen > 0:
-                log_string('segmentation accuracy: %f' % \
+                log_string('classification accuracy: %f' % \
                     (total_correct / float(total_seen)))
             if total_tp+total_fn > 0 and total_tp+total_fp > 0:
-                log_string('segmentation recall: %f'% \
+                log_string('classification recall: %f'% \
                     (float(total_tp)/(total_tp+total_fn)))
-                log_string('segmentation precision: %f'% \
+                log_string('classification precision: %f'% \
                     (float(total_tp)/(total_tp+total_fp)))
             log_string('box IoU (ground/3D): %f / %f' % \
-                (iou2ds_sum / float(total_nms), iou3ds_sum / float(total_nms)))
-            log_string('proposal recall: %f' % (float(total_proposal_recall) / sample_num))
+                (iou2ds_sum / float(total_pos), iou3ds_sum / float(total_pos)))
+            log_string('IoU 3D > 0.7: %f' % (float(total_box_correct) / total_pos))
             total_correct = 0
             total_seen = 0
             total_tp = 0
@@ -268,11 +266,94 @@ def train_one_epoch(sess, ops, pls, train_writer):
             loss_sum = 0
             iou2ds_sum = 0
             iou3ds_sum = 0
-            total_nms = 0
-            total_proposal_recall = 0
+            total_pos = 0
+            total_box_correct = 0
         if is_last_batch:
             break
         batch_idx += 1
+
+def eval_one_epoch(sess, ops, pls, test_writer):
+    global EPOCH_CNT
+    is_training = False
+    log_string(str(datetime.now()))
+    log_string('---- EPOCH %03d EVALUATION ----'%(EPOCH_CNT))
+
+    # To collect statistics
+    total_correct = 0
+    total_seen = 0
+    total_tp = 0
+    total_fp = 0
+    total_fn = 0
+    loss_sum = 0
+    iou2ds_sum = 0
+    iou3ds_sum = 0
+    total_pos = 0
+    total_box_correct = 0
+
+    # Training with batches
+    batch_idx = 0
+    while(True):
+        batch_data, is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
+
+        feed_dict = {
+            pls['pointclouds']: batch_data['pointcloud'],
+            pls['img_inputs']: batch_data['images'],
+            pls['calib']: batch_data['calib'],
+            pls['proposal_boxes']: batch_data['prop_box'],
+            pls['class_labels']: batch_data['label'],
+            pls['center_bin_x_labels']: batch_data['center_x_cls'],
+            pls['center_bin_z_labels']: batch_data['center_z_cls'],
+            pls['center_x_res_labels']: batch_data['center_x_res'],
+            pls['center_y_res_labels']: batch_data['center_y_res'],
+            pls['center_z_res_labels']: batch_data['center_z_res'],
+            pls['heading_bin_labels']: batch_data['angle_cls'],
+            pls['heading_res_labels']: batch_data['angle_res'],
+            pls['size_class_labels']: batch_data['size_cls'],
+            pls['size_res_labels']: batch_data['size_res'],
+            pls['gt_box_of_prop']: batch_data['gt_box_of_prop'],
+            pls['is_training_pl']: is_training
+        }
+
+        summary, step, loss_val, iou2ds, iou3ds, logits_val, output_boxes \
+        = sess.run([
+            ops['merged'], ops['step'], ops['loss'],
+            ops['iou2ds'], ops['iou3ds'], ops['end_points']['cls_logits'],
+            ops['end_points']['output_boxes']], feed_dict=feed_dict)
+        iou2ds_sum += np.sum(iou2ds)
+        iou3ds_sum += np.sum(iou3ds)
+        total_pos += len(iou2ds)
+        total_box_correct += np.sum(iou3ds > 0.7)
+
+        test_writer.add_summary(summary, step)
+
+        # segmentation acc
+        preds_val = np.argmax(logits_val, axis=-1)
+        correct = np.sum(preds_val == batch_data['label'])
+        tp = np.sum(np.logical_and(preds_val == batch_data['label'], batch_data['label'] > 0))
+        fp = np.sum(np.logical_and(preds_val != batch_data['label'], batch_data['label'] == 0))
+        fn = np.sum(np.logical_and(preds_val != batch_data['label'], batch_data['label'] > 0))
+        total_correct += correct
+        total_tp += tp
+        total_fp += fp
+        total_fn += fn
+        total_seen += BATCH_SIZE
+        loss_sum += loss_val
+        if is_last_batch:
+            break
+        batch_idx += 1
+
+    log_string('mean loss: %f' % (loss_sum / total_seen))
+    if total_seen > 0:
+        log_string('eval classification accuracy: %f' % \
+            (total_correct / float(total_seen)))
+    log_string('eval classification recall: %f'% \
+        (float(total_tp)/(total_tp+total_fn)))
+    log_string('eval classification precision: %f'% \
+        (float(total_tp)/(total_tp+total_fp)))
+    log_string('box IoU (ground/3D): %f / %f' % \
+        (iou2ds_sum / float(total_pos), iou3ds_sum / float(total_pos)))
+    log_string('IoU 3D > 0.7: %f' % (float(total_box_correct) / total_pos))
+    EPOCH_CNT += 1
 
 if __name__ == "__main__":
     log_string('pid: %s'%(str(os.getpid())))
