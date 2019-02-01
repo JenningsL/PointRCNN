@@ -83,16 +83,15 @@ def get_bn_decay(batch):
     bn_decay = tf.minimum(BN_DECAY_CLIP, 1 - bn_momentum)
     return bn_decay
 
+
 TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train')
-TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
+# data loading threads
+# FIXME: don't use data augmentation with image feature before calib matrix is adjust accordingly
+train_produce_thread = Thread(target=TRAIN_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train', False))
+train_produce_thread.start()
 
 def train():
     ''' Main function for training and simple evaluation. '''
-    # data loading threads
-    train_produce_thread = Thread(target=TRAIN_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train', True))
-    train_produce_thread.start()
-    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val', False))
-    test_produce_thread.start()
 
     with tf.Graph().as_default():
         rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=True)
@@ -136,7 +135,7 @@ def train():
                 train_op = slim.learning.create_train_op(
                     loss,
                     optimizer,
-                    clip_gradient_norm=1.0,
+                    #clip_gradient_norm=1.0,
                     global_step=batch)
 
             # Add ops to save and restore all the variables.
@@ -173,8 +172,7 @@ def train():
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
             # eval iou and recall is slow
-            #eval_iou_recall = (epoch > 10 and epoch % 2 == 0)
-            eval_iou_recall = epoch % 2 == 0
+            eval_iou_recall = (epoch > 10 and epoch % 2 == 0)
             train_one_epoch(sess, ops, placeholders, train_writer, eval_iou_recall)
             #if epoch % 3 == 0:
             # Save the variables to disk.
@@ -187,9 +185,7 @@ def train():
             if eval_iou_recall:
                 val_loss = eval_one_epoch(sess, ops, placeholders, test_writer, eval_iou_recall)
     TRAIN_DATASET.stop_loading()
-    TEST_DATASET.stop_loading()
     train_produce_thread.join()
-    test_produce_thread.join()
 
 
 def train_one_epoch(sess, ops, pls, train_writer, more=False):
@@ -297,7 +293,12 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
         batch_idx += 1
 
 
+
 def eval_one_epoch(sess, ops, pls, test_writer, more=False):
+    TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
+    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val', False))
+    test_produce_thread.start()
+
     global EPOCH_CNT
     is_training = False
     log_string(str(datetime.now()))
@@ -376,15 +377,20 @@ def eval_one_epoch(sess, ops, pls, test_writer, more=False):
     log_string('eval mean loss: %f' % (loss_sum / float(num_samples)))
     log_string('eval segmentation accuracy: %f'% \
         (total_correct / float(total_seen)))
-    log_string('eval segmentation recall: %f'% \
-        (float(total_tp)/(total_tp+total_fn)))
-    log_string('eval segmentation precision: %f'% \
-        (float(total_tp)/(total_tp+total_fp)))
+    if total_tp+total_fn > 0 and total_tp+total_fp > 0:
+        log_string('eval segmentation recall: %f'% \
+            (float(total_tp)/(total_tp+total_fn)))
+        log_string('eval segmentation precision: %f'% \
+            (float(total_tp)/(total_tp+total_fp)))
     if more:
         log_string('eval box IoU (ground/3D): %f / %f' % \
             (iou2ds_sum / float(total_nms), iou3ds_sum / float(total_nms)))
         log_string('eval proposal recall: %f' % (float(total_proposal_recall) / num_samples))
     EPOCH_CNT += 1
+
+    TEST_DATASET.stop_loading()
+    test_produce_thread.join()
+
     return loss_sum / float(num_samples)
 
 if __name__ == "__main__":

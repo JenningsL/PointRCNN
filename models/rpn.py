@@ -135,8 +135,8 @@ class RPN(object):
             #128, [1, 1],
             2, [1, 1],
             scope='bottleneck',
-            #normalizer_fn=slim.batch_norm,
-            normalizer_fn=None,
+            normalizer_fn=slim.batch_norm,
+            #normalizer_fn=None,
             normalizer_params={
                 'is_training': self.is_training})
         return self.img_bottleneck
@@ -187,10 +187,9 @@ class RPN(object):
             [128,128], is_training, bn_decay, scope='fa_layer5', bn=True)
         end_points['point_feats'] = tf.concat([l0_xyz,l0_points], axis=-1) # (B, N, 3+C1)
         end_points['point_feats_fuse'] = tf.concat([end_points['point_feats'], end_points['point_img_feats']], axis=-1) # (B, N, 3+C1+C2)
+        semantic_features = tf.concat([l0_points, end_points['point_img_feats']], axis=-1) # (B, N, C1+C2)
         # FC layers
-        # net = tf_util.conv1d(l0_points, 128, 1, padding='VALID', bn=True,
-        #     is_training=is_training, scope='conv1d-fc1', bn_decay=bn_decay)
-        net = tf_util.conv1d(end_points['point_img_feats'], 128, 1, padding='VALID', bn=True,
+        net = tf_util.conv1d(semantic_features, 128, 1, padding='VALID', bn=True,
             is_training=is_training, scope='conv1d-fc1', bn_decay=bn_decay)
         net = tf_util.dropout(net, keep_prob=0.7,
             is_training=is_training, scope='dp1')
@@ -281,9 +280,9 @@ class RPN(object):
             end_points['point_img_feats'] = tf.reshape(
                 tf.gather_nd(img_feature_maps, indices), # (B*N,C)
                 [self.batch_size, self.num_point, -1])  # (B,N,C)
-            #tf.summary.scalar('point_img_feats', tf.reduce_mean(end_points['point_img_feats']))
 
-            net = tf_util.conv1d(end_points['point_img_feats'], 128, 1, padding='VALID', bn=False,
+        '''
+            net = tf_util.conv1d(end_points['point_img_feats'], 128, 1, padding='VALID', bn=True,
                 is_training=is_training, scope='conv1d-fc1', bn_decay=bn_decay)
             net = tf_util.dropout(net, keep_prob=0.7,
                 is_training=is_training, scope='dp1')
@@ -293,7 +292,7 @@ class RPN(object):
             end_points['foreground_logits'] = logits
         return end_points
         '''
-        with tf.device('/gpu:0'):
+        with tf.device('/gpu:1'):
             end_points = self.get_segmentation_net(point_cloud, is_training, bn_decay, end_points)
             foreground_logits = tf.cond(is_training, lambda: tf.one_hot(mask_label, 2), lambda: end_points['foreground_logits'])
             # fg_point_feats include xyz
@@ -309,7 +308,6 @@ class RPN(object):
             end_points['gt_box_of_point'] = tf.gather_nd(self.placeholders['gt_box_of_point'], end_points['fg_point_indices'])
             end_points['gt_box_of_point'].set_shape([self.batch_size, NUM_FG_POINT, 8, 3])
         return end_points
-        '''
 
     def get_loss(self):
         pls = self.placeholders
