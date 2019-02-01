@@ -256,8 +256,20 @@ if __name__ == '__main__':
             }))
 
             pts2d = projection.tf_rect_to_image(tf.slice(batch_data['pointcloud'],[0,0,0],[-1,-1,3]), batch_data['calib'])
-            res = sess.run(pts2d)
-
+            pts2d = tf.cast(pts2d, tf.int32) #(B,N,2)
+            indices = tf.concat([
+                tf.expand_dims(tf.tile(tf.range(0, 1), [16384]), axis=-1), # (B*N, 1)
+                tf.reshape(pts2d, [1*16384, 2])
+            ], axis=-1) # (B*N,3)
+            indices = tf.gather(indices, [0,2,1], axis=-1) # image's shape is (y,x)
+            point_img_feats = tf.reshape(
+                tf.gather_nd(batch_data['images'], indices), # (B*N,C)
+                [1, 16384, -1])  # (B,N,C)
+            res = sess.run(point_img_feats)
+            p2d = sess.run(pts2d)
+            print(batch_data['images'][0,p2d[0][0][1],p2d[0][0][0]])
+            print(res[0][0])
+            break
             img = batch_data['images'][0]/255
             for i,p in enumerate(res[0]):
                 if batch_data['seg_label'][0][i] != 1:

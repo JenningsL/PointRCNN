@@ -276,8 +276,9 @@ class RPN(object):
                 tf.expand_dims(tf.tile(tf.range(0, self.batch_size), [self.num_point]), axis=-1), # (B*N, 1)
                 tf.reshape(pts2d, [self.batch_size*self.num_point, 2])
             ], axis=-1) # (B*N,3)
+            indices = tf.gather(indices, [0,2,1], axis=-1) # image's shape is (y,x)
             end_points['point_img_feats'] = tf.reshape(
-                tf.gather_nd(img_feature_maps, pts2d), # (B*N,C)
+                tf.gather_nd(img_feature_maps, indices), # (B*N,C)
                 [self.batch_size, self.num_point, -1])  # (B,N,C)
 
         with tf.device('/gpu:0'):
