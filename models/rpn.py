@@ -129,16 +129,17 @@ class RPN(object):
                 self._img_preprocessed,
                 self._img_pixel_size,
                 self.is_training)
-        return self.img_feature_maps
-        # self.img_bottleneck = slim.conv2d(
-        #     self.img_feature_maps,
-        #     #128, [1, 1],
-        #     1, [1, 1],
-        #     scope='bottleneck',
-        #     normalizer_fn=slim.batch_norm,
-        #     normalizer_params={
-        #         'is_training': self.is_training})
-        # return self.img_bottleneck
+        #return self.img_feature_maps
+        self.img_bottleneck = slim.conv2d(
+            self.img_feature_maps,
+            #128, [1, 1],
+            2, [1, 1],
+            scope='bottleneck',
+            #normalizer_fn=slim.batch_norm,
+            normalizer_fn=None,
+            normalizer_params={
+                'is_training': self.is_training})
+        return self.img_bottleneck
 
     def get_segmentation_net(self, point_cloud, is_training, bn_decay, end_points):
         ''' 3D instance segmentation PointNet v2 network.
@@ -268,7 +269,7 @@ class RPN(object):
         bn_decay = self.bn_decay
         end_points = self.end_points
 
-        with tf.device('/gpu:1'):
+        with tf.device('/gpu:0'):
             img_feature_maps = self.build_img_extractor() # (B,360,1200,C)
             pts2d = projection.tf_rect_to_image(tf.slice(point_cloud,[0,0,0],[-1,-1,3]), self.placeholders['calib'])
             pts2d = tf.cast(pts2d, tf.int32) #(B,N,2)
@@ -279,7 +280,18 @@ class RPN(object):
             end_points['point_img_feats'] = tf.reshape(
                 tf.gather_nd(img_feature_maps, pts2d), # (B*N,C)
                 [self.batch_size, self.num_point, -1])  # (B,N,C)
+            #tf.summary.scalar('point_img_feats', tf.reduce_mean(end_points['point_img_feats']))
 
+            net = tf_util.conv1d(end_points['point_img_feats'], 128, 1, padding='VALID', bn=False,
+                is_training=is_training, scope='conv1d-fc1', bn_decay=bn_decay)
+            net = tf_util.dropout(net, keep_prob=0.7,
+                is_training=is_training, scope='dp1')
+            logits = tf_util.conv1d(net, 2, 1,
+                padding='VALID', activation_fn=None, scope='conv1d-fc2')
+
+            end_points['foreground_logits'] = logits
+        return end_points
+        '''
         with tf.device('/gpu:0'):
             end_points = self.get_segmentation_net(point_cloud, is_training, bn_decay, end_points)
             foreground_logits = tf.cond(is_training, lambda: tf.one_hot(mask_label, 2), lambda: end_points['foreground_logits'])
@@ -296,6 +308,7 @@ class RPN(object):
             end_points['gt_box_of_point'] = tf.gather_nd(self.placeholders['gt_box_of_point'], end_points['fg_point_indices'])
             end_points['gt_box_of_point'].set_shape([self.batch_size, NUM_FG_POINT, 8, 3])
         return end_points
+        '''
 
     def get_loss(self):
         pls = self.placeholders
