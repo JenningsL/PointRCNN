@@ -126,6 +126,8 @@ class Dataset(object):
             objectness, center_cls, center_res, angle_cls, angle_res, size_cls, size_res = \
                 frame['proposal_of_point']
             batch['pointcloud'][i,...] = frame['pointcloud']
+            batch['images'][i,...] = frame['image']
+            batch['calib'][i,...] = frame['calib']
             batch['seg_label'][i,:] = frame['mask_label']
             batch['center_x_cls'][i,...] = center_cls[:,0]
             batch['center_z_cls'][i,...] = center_cls[:,1]
@@ -227,22 +229,46 @@ class Dataset(object):
 if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
-    dataset = Dataset(16384, kitti_path, split, types=['Car'], difficulties=[1])
-    dataset.load('./train', True)
-    # produce_thread = threading.Thread(target=dataset.load, args=('./train',True))
-    # produce_thread.start()
-    # i = 0
-    # total = 0
-    # while(True):
-    #     batch_data = dataset.get_next_batch(1, need_id=True)
-    #     total += np.sum(batch_data[1] == 1)
-    #     print('foreground points:', np.sum(batch_data[1] == 1))
-    #     print(batch_data[-2])
-    #     if i >= 10:
-    #     # if batch_data[-1]:
-    #         break
-    #     i += 1
-    # print(total/i)
-    # dataset.stop_loading()
-    # print('stop loading')
-    # produce_thread.join()
+
+    sys.path.append('../models')
+    from collections import namedtuple
+    import tensorflow as tf
+    from img_vgg_pyramid import ImgVggPyr
+    import projection
+    VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
+
+    # dataset = Dataset(16384, kitti_path, split, types=['Car'], difficulties=[1])
+    dataset = Dataset(16384, kitti_path, split)
+    # dataset.load('./train', True)
+    produce_thread = threading.Thread(target=dataset.load, args=('./train',False))
+    produce_thread.start()
+    i = 0
+    total = 0
+    while(True):
+        batch_data, is_last_batch = dataset.get_next_batch(1, need_id=True)
+        with tf.Session() as sess:
+            img_vgg = ImgVggPyr(VGG_config(**{
+                'vgg_conv1': [2, 32],
+                'vgg_conv2': [2, 64],
+                'vgg_conv3': [3, 128],
+                'vgg_conv4': [3, 256],
+                'l2_weight_decay': 0.0005
+            }))
+
+            pts2d = projection.tf_rect_to_image(tf.slice(batch_data['pointcloud'],[0,0,0],[-1,-1,3]), batch_data['calib'])
+            res = sess.run(pts2d)
+
+            img = batch_data['images'][0]/255
+            for i,p in enumerate(res[0]):
+                if batch_data['seg_label'][0][i] != 1:
+                    continue
+                cv2.circle(img,(p[0], p[1]),1,(255,0,0),1)
+            cv2.imshow('img', img)
+            cv2.waitKey(0)
+
+        if is_last_batch:
+            break
+        i += 1
+    dataset.stop_loading()
+    print('stop loading')
+    produce_thread.join()
