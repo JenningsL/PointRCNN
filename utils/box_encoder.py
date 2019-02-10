@@ -34,8 +34,9 @@ class BoxEncoder(object):
         angle += self.HEADING_SEARCH_RANGE # [-HEADING_SEARCH_RANGE, HEADING_SEARCH_RANGE]->[0, 2*HEADING_SEARCH_RANGE]
 
         angle_per_class = 2*self.HEADING_SEARCH_RANGE/float(self.NUM_HEADING_BIN)
-        shifted_angle = (angle+angle_per_class/2)%(2*self.HEADING_SEARCH_RANGE)
+        shifted_angle = angle+angle_per_class/2
         class_id = int(shifted_angle/angle_per_class)
+        class_id = np.clip(class_id, 0, self.NUM_HEADING_BIN-1)
         residual_angle = shifted_angle - \
             (class_id * angle_per_class + angle_per_class/2)
         return class_id, residual_angle/angle_per_class
@@ -187,7 +188,7 @@ if __name__ == '__main__':
         pass
     obj = Box()
     obj.t = np.array([-28.3,1.2,5.2])
-    obj.ry = -np.pi * 0.1
+    obj.ry = np.pi * 0.5
     obj.l = 1
     obj.w = 0.6
     obj.h = 0.7
@@ -198,6 +199,7 @@ if __name__ == '__main__':
     HEADING_SEARCH_RANGE = 0.25*np.pi
     box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
     center_cls, center_res, angle_cls,angle_res, size_cls, size_res = box_encoder.encode(obj, point)
+    print(angle_cls,angle_res)
 
     def get_one_hot(targets, nb_classes):
         res = np.eye(nb_classes)[np.array(targets).reshape(-1)]
