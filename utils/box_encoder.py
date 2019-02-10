@@ -11,11 +11,12 @@ NUM_OBJ_CLASSES = 4
 
 class BoxEncoder(object):
     """Encode and decode 3d box"""
-    def __init__(self, search_range=3.0, num_center_bin=12, num_heading_bin=12):
-        self.CENTER_SEARCH_RANGE = search_range
+    def __init__(self, center_range=3.0, num_center_bin=12, heading_range=np.pi, num_heading_bin=12):
+        self.CENTER_SEARCH_RANGE = center_range
+        self.HEADING_SEARCH_RANGE = heading_range
         self.NUM_CENTER_BIN = num_center_bin
         self.NUM_HEADING_BIN = num_heading_bin
-        self.CENTER_BIN_SIZE = search_range * 2 / num_center_bin # in one direction
+        self.CENTER_BIN_SIZE = center_range * 2 / num_center_bin # in one direction
 
     def angle2class(self, angle):
         ''' Convert continuous angle to discrete class and residual.
@@ -24,27 +25,25 @@ class BoxEncoder(object):
                 0, 1*(2pi/N), 2*(2pi/N) ...  (N-1)*(2pi/N)
         Output:
             class_id, int, among 0,1,...,N-1
-            residual_angle: float, a number such that
-                class*(2pi/N) + residual_angle = angle
+            residual_angle_norm: float, a number such that
+                class*(2pi/N) + residual_angle*angle_per_class = angle
         '''
-        angle = angle%(2*np.pi)
-        assert(angle>=0 and angle<=2*np.pi)
-        angle_per_class = 2*np.pi/float(self.NUM_HEADING_BIN)
-        shifted_angle = (angle+angle_per_class/2)%(2*np.pi)
+        assert(angle>=-self.HEADING_SEARCH_RANGE and angle<=self.HEADING_SEARCH_RANGE)
+        angle += self.HEADING_SEARCH_RANGE # [-HEADING_SEARCH_RANGE, HEADING_SEARCH_RANGE]->[0, 2*HEADING_SEARCH_RANGE]
+
+        angle_per_class = 2*self.HEADING_SEARCH_RANGE/float(self.NUM_HEADING_BIN)
+        shifted_angle = (angle+angle_per_class/2)%(2*self.HEADING_SEARCH_RANGE)
         class_id = int(shifted_angle/angle_per_class)
         residual_angle = shifted_angle - \
             (class_id * angle_per_class + angle_per_class/2)
-        return class_id, residual_angle
+        return class_id, residual_angle/angle_per_class
 
-    def class2angle(self, pred_cls, residual, to_label_format=True):
-        ''' Inverse function to angle2class.
-        If to_label_format, adjust angle to the range as in labels.
-        '''
-        angle_per_class = 2*np.pi/float(self.NUM_HEADING_BIN)
+    def class2angle(self, pred_cls, residual):
+        ''' Inverse function to angle2class.'''
+        angle_per_class = 2*self.HEADING_SEARCH_RANGE/float(self.NUM_HEADING_BIN)
         angle_center = pred_cls * angle_per_class
-        angle = angle_center + residual
-        if to_label_format and angle>np.pi:
-            angle = angle - 2*np.pi
+        angle = angle_center + residual * angle_per_class
+        angle -= self.HEADING_SEARCH_RANGE
         return angle
 
     def size2class(self, size):
@@ -56,17 +55,17 @@ class BoxEncoder(object):
             type_name: string
         Output:
             size_class: int scalar
-            size_residual: numpy array of shape (3,)
+            size_residual_norm: numpy array of shape (3,)
         '''
         dist = np.linalg.norm(type_mean_size - size, axis=1)
         size_class = np.argmin(dist)
         size_residual = size - type_mean_size[size_class]
-        return size_class, size_residual
+        return size_class, size_residual/type_mean_size[size_class]
 
     def class2size(self, pred_cls, residual):
         ''' Inverse function to size2class. '''
         mean_size = type_mean_size[pred_cls]
-        return mean_size + residual
+        return mean_size + residual*type_mean_size[pred_cls]
 
     def center2class(self, obj_center, point):
         center = obj_center - point
@@ -154,10 +153,11 @@ class BoxEncoder(object):
         heading_cls = tf.argmax(end_points['heading_scores'], axis=-1)
         heading_one_hot = tf.one_hot(heading_cls, depth=self.NUM_HEADING_BIN, axis=-1)
         heading_res_norm = tf.reduce_sum(end_points['heading_residuals_normalized']*tf.to_float(heading_one_hot), axis=2) # BxN
-        angle_per_class = tf.constant(2*np.pi/float(self.NUM_HEADING_BIN), dtype=tf.float32)
+        angle_per_class = tf.constant(2*self.HEADING_SEARCH_RANGE/float(self.NUM_HEADING_BIN), dtype=tf.float32)
         angle = tf.to_float(heading_cls) * angle_per_class + heading_res_norm * angle_per_class
         # to label format
-        angle = tf.where(angle > np.pi, angle - 2*np.pi, angle) # (B,N)
+        # angle = tf.where(angle > np.pi, angle - 2*np.pi, angle) # (B,N)
+        angle = angle - self.HEADING_SEARCH_RANGE
         # size
         size_cls = tf.argmax(end_points['size_scores'], axis=-1)
         size_one_hot = tf.one_hot(size_cls, depth=NUM_SIZE_CLUSTER, axis=-1)
@@ -185,20 +185,17 @@ if __name__ == '__main__':
         pass
     obj = Box()
     obj.t = np.array([-28.3,1.2,5.2])
-    obj.ry = math.pi * 0.3
+    obj.ry = -np.pi * 0.1
     obj.l = 1
     obj.w = 0.6
     obj.h = 0.7
     point = np.array([-27.1,1.3,4.3])
-    NUM_HEADING_BIN = 12
+    NUM_HEADING_BIN = 9
     NUM_CENTER_BIN = 6
-    CENTER_SEARCH_RANGE = 1.5
-    box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, NUM_HEADING_BIN)
+    CENTER_SEARCH_RANGE = 3.0
+    HEADING_SEARCH_RANGE = 0.25*np.pi
+    box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
     center_cls, center_res, angle_cls,angle_res, size_cls, size_res = box_encoder.encode(obj, point)
-
-    # decode
-    angle_res /= (2*np.pi/float(NUM_HEADING_BIN))
-    size_res /= type_mean_size[size_cls]
 
     def get_one_hot(targets, nb_classes):
         res = np.eye(nb_classes)[np.array(targets).reshape(-1)]
@@ -230,8 +227,8 @@ if __name__ == '__main__':
     corners_3d = get_box3d_corners_helper(tf.reshape(centers, [N,3]), tf.reshape(angles, [N]), tf.reshape(sizes, [N,3]))
     with tf.Session() as sess:
         c, a, s = sess.run([centers, angles, sizes])
-        print(c[0])
-        print(a[0])
-        print(s[0])
+        print(obj.t, '<->', c[0][0])
+        print(obj.ry, '<->', a[0][0])
+        print([obj.l, obj.w, obj.h], '<->', s[0][0])
         corners_list = sess.run(corners_3d)
         print(corners_list)

@@ -16,9 +16,10 @@ import projection
 from img_vgg_pyramid import ImgVggPyr
 from collections import namedtuple
 
-NUM_HEADING_BIN = 12
+NUM_HEADING_BIN = 9
 NUM_CENTER_BIN = 6
 CENTER_SEARCH_RANGE = 1.5
+HEADING_SEARCH_RANGE = 0.25*np.pi
 
 class RCNN(object):
     def __init__(self, batch_size, num_point, num_channel=133, bn_decay=None, is_training=True):
@@ -29,7 +30,7 @@ class RCNN(object):
         self.is_training = is_training
         self.end_points = {}
         self.placeholders = self.get_placeholders()
-        self.box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, NUM_HEADING_BIN)
+        self.box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
         self.build()
 
     def get_placeholders(self):
@@ -205,6 +206,7 @@ class RCNN(object):
         box_center = tf.squeeze(box_center, axis=1)
         box_center = box_center + tf.slice(self.placeholders['proposal_boxes'], [0,0], [-1,3])
         box_angle = tf.squeeze(box_angle, axis=1)
+        box_angle += tf.gather(self.placeholders['proposal_boxes'], 3, axis=-1) # resotre absoluate angle
         box_size = tf.squeeze(box_size, axis=1)
         corners_3d = get_box3d_corners_helper(box_center, box_angle, box_size)
         self.end_points['output_boxes'] = corners_3d
@@ -248,8 +250,7 @@ class RCNN(object):
         hcls_onehot = tf.one_hot(self.placeholders['heading_bin_labels'],
             depth=NUM_HEADING_BIN,
             on_value=1, off_value=0, axis=-1) # BxNxNUM_HEADING_BIN
-        heading_residual_normalized_label = \
-            self.placeholders['heading_res_labels'] / (2*np.pi/float(NUM_HEADING_BIN))
+        heading_residual_normalized_label = self.placeholders['heading_res_labels']
         heading_res_dist = tf.norm(tf.reduce_sum( \
             end_points['heading_residuals_normalized']*tf.to_float(hcls_onehot), axis=-1) - \
             heading_residual_normalized_label)
@@ -269,12 +270,7 @@ class RCNN(object):
         predicted_size_residual_normalized = tf.reduce_sum( \
             end_points['size_residuals_normalized']*scls_onehot_tiled, axis=1) # Bx3
 
-        mean_size_arr_expand = tf.expand_dims( \
-            tf.constant(type_mean_size, dtype=tf.float32),0) # NUM_SIZE_CLUSTERx3 -> 1xNUM_SIZE_CLUSTERx3
-        mean_size_arr_expand_tiled = tf.tile(mean_size_arr_expand, [self.batch_size, 1, 1])
-        mean_size_label = tf.reduce_sum( \
-            scls_onehot_tiled * mean_size_arr_expand_tiled, axis=1) # Bx3
-        size_residual_label_normalized = self.placeholders['size_res_labels'] / mean_size_label # Bx3
+        size_residual_label_normalized = self.placeholders['size_res_labels'] # Bx3
 
         size_dist = tf.norm(size_residual_label_normalized - predicted_size_residual_normalized, axis=-1)
         size_res_loss = huber_loss(is_obj_mask*size_dist, delta=1.0)

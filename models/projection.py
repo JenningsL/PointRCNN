@@ -33,7 +33,7 @@ def tf_project_to_image_space(boxes, calib, image_shape):
 
     Args:
         boxes: a tensor of anchors in the shape [B, 7].
-            The anchors are in the format [x, y, z, ry, h, w, l]
+            The anchors are in the format [x, y, z, l, h, w, ry]
         calib: tensor [3, 4] stereo camera calibration p2 matrix
         image_shape: a float32 tensor of shape [2]. This is dimension of
             the image [h, w]
@@ -46,8 +46,8 @@ def tf_project_to_image_space(boxes, calib, image_shape):
     """
     batch_size = boxes.shape[0]
     box_center = tf.slice(boxes, [0,0], [-1, 3])
-    box_angle = tf.slice(boxes, [0,3], [-1, 1])
-    box_size = tf.slice(boxes, [0,4], [-1, 3])
+    box_size = tf.slice(boxes, [0,3], [-1, 3])
+    box_angle = tf.slice(boxes, [0,6], [-1, 1])
     corners_3d = get_box3d_corners_helper(
         box_center, tf.gather(box_angle, 0, axis=-1), box_size) # (B,8,3)
     #corners_3d_list = tf.reshape(corners_3d, [batch_size*8, 3])

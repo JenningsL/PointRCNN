@@ -24,8 +24,9 @@ from data_conf import type_whitelist, difficulties_whitelist
 NUM_HEADING_BIN = 12
 NUM_CENTER_BIN = 12
 CENTER_SEARCH_RANGE = 3.0
+HEADING_SEARCH_RANGE = np.pi
 
-box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, NUM_HEADING_BIN)
+box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
 
 class Dataset(object):
     def __init__(self, npoints, kitti_path, split, \
