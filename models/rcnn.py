@@ -206,7 +206,7 @@ class RCNN(object):
         box_center = tf.squeeze(box_center, axis=1)
         box_center = box_center + tf.slice(self.placeholders['proposal_boxes'], [0,0], [-1,3])
         box_angle = tf.squeeze(box_angle, axis=1)
-        box_angle += tf.gather(self.placeholders['proposal_boxes'], 3, axis=-1) # resotre absoluate angle
+        box_angle += tf.gather(self.placeholders['proposal_boxes'], 6, axis=-1) # resotre absoluate angle
         box_size = tf.squeeze(box_size, axis=1)
         corners_3d = get_box3d_corners_helper(box_center, box_angle, box_size)
         self.end_points['output_boxes'] = corners_3d
@@ -295,7 +295,7 @@ class RCNN(object):
             #'center_z_res_loss': center_z_res_loss,
             #'center_y_res_loss': center_y_res_loss,
             #'mask_loss': cls_loss
-            'mean_size_label': mean_size_label,
+            #'mean_size_label': mean_size_label,
             'size_residuals_normalized': end_points['size_residuals_normalized']
         }
         return total_loss, loss_endpoints

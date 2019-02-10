@@ -28,7 +28,9 @@ class BoxEncoder(object):
             residual_angle_norm: float, a number such that
                 class*(2pi/N) + residual_angle*angle_per_class = angle
         '''
-        assert(angle>=-self.HEADING_SEARCH_RANGE and angle<=self.HEADING_SEARCH_RANGE)
+        #assert(angle>=-self.HEADING_SEARCH_RANGE and angle<=self.HEADING_SEARCH_RANGE)
+        if angle < -self.HEADING_SEARCH_RANGE or angle > self.HEADING_SEARCH_RANGE:
+            print 'beyond HEADING_SEARCH_RANGE'
         angle += self.HEADING_SEARCH_RANGE # [-HEADING_SEARCH_RANGE, HEADING_SEARCH_RANGE]->[0, 2*HEADING_SEARCH_RANGE]
 
         angle_per_class = 2*self.HEADING_SEARCH_RANGE/float(self.NUM_HEADING_BIN)
