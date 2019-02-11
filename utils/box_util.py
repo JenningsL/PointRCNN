@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import numpy as np
 from scipy.spatial import ConvexHull
+from shapely.geometry import Polygon
 
 def polygon_clip(subjectPolygon, clipPolygon):
    """ Clip a polygon with another polygon.
@@ -84,7 +85,7 @@ def is_clockwise(p):
     y = p[:,1]
     return np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)) > 0
 
-def box3d_iou(corners1, corners2):
+def box3d_iou_old(corners1, corners2):
     ''' Compute 3D bounding box IoU.
 
     Input:
@@ -110,6 +111,21 @@ def box3d_iou(corners1, corners2):
     vol2 = box3d_vol(corners2)
     iou = inter_vol / (vol1 + vol2 - inter_vol)
     return iou, iou_2d
+
+def box3d_iou(corners1, corners2):
+    bev_box1 = corners1[:4, [0,2]]
+    bev_box2 = corners2[:4, [0,2]]
+    p1 = Polygon(bev_box1)
+    p2 = Polygon(bev_box2)
+    intersection = p1.intersection(p2).area
+    iou_2d = intersection / (p1.area + p2.area - intersection)
+    ymax = min(corners1[0,1], corners2[0,1])
+    ymin = max(corners1[4,1], corners2[4,1])
+    inter_vol = intersection * max(0.0, ymax-ymin)
+    vol1 = box3d_vol(corners1)
+    vol2 = box3d_vol(corners2)
+    iou_3d = inter_vol / (vol1 + vol2 - inter_vol)
+    return iou_3d, iou_2d
 
 
 def get_iou(bb1, bb2):
@@ -261,4 +277,3 @@ def get_3d_box(box_size, heading_angle, center):
     corners_3d[2,:] = corners_3d[2,:] + center[2];
     corners_3d = np.transpose(corners_3d)
     return corners_3d
-

@@ -16,9 +16,10 @@ import projection
 from img_vgg_pyramid import ImgVggPyr
 from collections import namedtuple
 
-NUM_HEADING_BIN = 12
+NUM_HEADING_BIN = 9
 NUM_CENTER_BIN = 6
 CENTER_SEARCH_RANGE = 1.5
+HEADING_SEARCH_RANGE = 0.25*np.pi
 
 class RCNN(object):
     def __init__(self, batch_size, num_point, num_channel=133, bn_decay=None, is_training=True):
@@ -29,7 +30,7 @@ class RCNN(object):
         self.is_training = is_training
         self.end_points = {}
         self.placeholders = self.get_placeholders()
-        self.box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, NUM_HEADING_BIN)
+        self.box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
         self.build()
 
     def get_placeholders(self):
@@ -76,20 +77,20 @@ class RCNN(object):
         #return self.img_feature_maps
         self.img_bottleneck = slim.conv2d(
             self.img_feature_maps,
-            2, [1, 1],
+            1, [1, 1],
             scope='bottleneck',
             normalizer_fn=slim.batch_norm,
             normalizer_params={
                 'is_training': self.is_training})
+        #tf.summary.image('img_feature', tf.reduce_max(self.img_bottleneck,axis=-1,keepdims=True),max_outputs=3)
         return self.img_bottleneck
-        '''
-        '''
 
     def build(self):
         point_cloud = self.placeholders['pointclouds']
         is_training = self.placeholders['is_training_pl']
         batch_size = self.batch_size
         # image
+        '''
         img_bottleneck = self.build_img_extractor()
         box2d_corners, box2d_corners_norm = projection.tf_project_to_image_space(
             self.placeholders['proposal_boxes'],
@@ -99,6 +100,7 @@ class RCNN(object):
             box2d_corners_norm,
             tf.range(0, batch_size),
             [16,16])
+        '''
 
         l0_xyz = tf.slice(point_cloud, [0,0,0], [-1,-1,3])
         l0_points = tf.slice(point_cloud, [0,0,3], [-1,-1,self.num_channel-3])
@@ -117,12 +119,14 @@ class RCNN(object):
             scope='rcnn-sa3', bn=True)
 
         point_feats = tf.reshape(l3_points, [batch_size, -1])
-        img_feats = tf.reshape(img_rois, [batch_size, -1])
-        feats = tf.concat([point_feats, img_feats], axis=-1)
+        #img_feats = tf.reshape(img_rois, [batch_size, -1])
+        #feats = tf.concat([point_feats, img_feats], axis=-1)
+        #tf.summary.scalar('img_features', tf.reduce_mean(img_feats))
+        #tf.summary.scalar('point_features', tf.reduce_mean(point_feats))
 
         # Classification
         #cls_net = tf_util.fully_connected(img_feats, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
-        cls_net = tf_util.fully_connected(feats, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
+        cls_net = tf_util.fully_connected(point_feats, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
         cls_net = tf_util.dropout(cls_net, keep_prob=0.5, is_training=is_training, scope='rcnn-cls-dp1')
         cls_net = tf_util.fully_connected(cls_net, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc2', bn_decay=self.bn_decay)
         cls_net = tf_util.dropout(cls_net, keep_prob=0.5, is_training=is_training, scope='rcnn-cls-dp2')
@@ -202,6 +206,7 @@ class RCNN(object):
         box_center = tf.squeeze(box_center, axis=1)
         box_center = box_center + tf.slice(self.placeholders['proposal_boxes'], [0,0], [-1,3])
         box_angle = tf.squeeze(box_angle, axis=1)
+        box_angle += tf.gather(self.placeholders['proposal_boxes'], 6, axis=-1) # resotre absoluate angle
         box_size = tf.squeeze(box_size, axis=1)
         corners_3d = get_box3d_corners_helper(box_center, box_angle, box_size)
         self.end_points['output_boxes'] = corners_3d
@@ -245,8 +250,7 @@ class RCNN(object):
         hcls_onehot = tf.one_hot(self.placeholders['heading_bin_labels'],
             depth=NUM_HEADING_BIN,
             on_value=1, off_value=0, axis=-1) # BxNxNUM_HEADING_BIN
-        heading_residual_normalized_label = \
-            self.placeholders['heading_res_labels'] / (2*np.pi/float(NUM_HEADING_BIN))
+        heading_residual_normalized_label = self.placeholders['heading_res_labels']
         heading_res_dist = tf.norm(tf.reduce_sum( \
             end_points['heading_residuals_normalized']*tf.to_float(hcls_onehot), axis=-1) - \
             heading_residual_normalized_label)
@@ -266,12 +270,7 @@ class RCNN(object):
         predicted_size_residual_normalized = tf.reduce_sum( \
             end_points['size_residuals_normalized']*scls_onehot_tiled, axis=1) # Bx3
 
-        mean_size_arr_expand = tf.expand_dims( \
-            tf.constant(type_mean_size, dtype=tf.float32),0) # NUM_SIZE_CLUSTERx3 -> 1xNUM_SIZE_CLUSTERx3
-        mean_size_arr_expand_tiled = tf.tile(mean_size_arr_expand, [self.batch_size, 1, 1])
-        mean_size_label = tf.reduce_sum( \
-            scls_onehot_tiled * mean_size_arr_expand_tiled, axis=1) # Bx3
-        size_residual_label_normalized = self.placeholders['size_res_labels'] / mean_size_label # Bx3
+        size_residual_label_normalized = self.placeholders['size_res_labels'] # Bx3
 
         size_dist = tf.norm(size_residual_label_normalized - predicted_size_residual_normalized, axis=-1)
         size_res_loss = huber_loss(is_obj_mask*size_dist, delta=1.0)
@@ -296,7 +295,7 @@ class RCNN(object):
             #'center_z_res_loss': center_z_res_loss,
             #'center_y_res_loss': center_y_res_loss,
             #'mask_loss': cls_loss
-            'mean_size_label': mean_size_label,
+            #'mean_size_label': mean_size_label,
             'size_residuals_normalized': end_points['size_residuals_normalized']
         }
         return total_loss, loss_endpoints

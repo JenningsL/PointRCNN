@@ -23,11 +23,12 @@ from data_util import ProposalObject, np_read_lines, find_match_label
 from data_conf import type_whitelist, difficulties_whitelist
 
 g_type2onehotclass = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
-NUM_HEADING_BIN = 12
+NUM_HEADING_BIN = 9
 NUM_CENTER_BIN = 6
 CENTER_SEARCH_RANGE = 1.5
+HEADING_SEARCH_RANGE = 0.25*np.pi
 
-box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, NUM_HEADING_BIN)
+box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
 
 class Dataset(object):
     def __init__(self, npoints, kitti_path, split, \
@@ -39,7 +40,7 @@ class Dataset(object):
         self.split = split
         self.kitti_dataset = kitti_object(kitti_path, 'training')
         self.frame_ids = self.load_split_ids(split)
-        random.shuffle(self.frame_ids)
+        # random.shuffle(self.frame_ids)
         # self.frame_ids = self.frame_ids[:1]
         self.num_channel = 6 # xyz intensity is_obj_one_hot
         self.AUG_X = 1
@@ -137,8 +138,51 @@ class Dataset(object):
         fig = draw_gt_boxes3d(gt_boxes, fig, draw_text=False, color=(1, 1, 1))
         raw_input()
 
-    def load_proposals(self, data_idx):
+    def viz_sample(self, sample):
+        import mayavi.mlab as mlab
+        from viz_util import draw_lidar, draw_lidar_simple, draw_gt_boxes3d
+        pc_rect = sample['pointcloud']
+        proposal = ProposalObject(sample['proposal_box'])
+        proposal.ry = 0
+        proposal.t = np.zeros((3,))
+        _, prop_box = utils.compute_box_3d(proposal, sample['calib'])
+        fig = draw_lidar(pc_rect)
+        mask = pc_rect[:,5] == 1
+        fig = draw_lidar(pc_rect[mask], fig=fig, pts_color=(1, 1, 1))
+        fig = draw_gt_boxes3d([prop_box], fig, draw_text=False, color=(1, 1, 1))
+        raw_input()
+
+    def get_proposals_gt(self, data_idx):
         # Generate proposals from labels for now
+        objects = self.kitti_dataset.get_label_objects(data_idx)
+        objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
+        proposals = []
+        avg_y = 0
+        for obj in objects:
+            center = obj.t + np.random.normal(0, 0.1, 3)
+            ry = obj.ry + np.random.normal(0, np.pi/8, 1)
+            # ry = obj.ry
+            l = obj.l + np.random.normal(0, 0.1, 1)[0]
+            h = obj.h + np.random.normal(0, 0.1, 1)[0]
+            w = obj.w + np.random.normal(0, 0.1, 1)[0]
+            proposals.append(ProposalObject(np.array([center[0],center[1],center[2],l, h, w, ry])))
+            avg_y += obj.t[1]
+
+        # TODO: negative samples
+        return proposals
+
+    def _load_proposals(self, proposal_path):
+        with open(proposal_path, 'rb') as f:
+            frame_ids = pickle.load(f)
+            proposal_boxes = pickle.load(f)
+            scores = pickle.load(f)
+        self.proposals = {}
+        for i in range(len(frame_ids)):
+            # to ProposalObject
+            self.proposals[frame_ids[i]] = proposal_boxes[i]
+
+    def get_proposals(self, data_idx):
+        # Get proposals from rpn output
         objects = self.kitti_dataset.get_label_objects(data_idx)
         objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
         proposals = []
@@ -149,7 +193,7 @@ class Dataset(object):
             l = obj.l + np.random.normal(0, 0.1, 1)[0]
             h = obj.h + np.random.normal(0, 0.1, 1)[0]
             w = obj.w + np.random.normal(0, 0.1, 1)[0]
-            proposals.append(ProposalObject(np.array([center[0],center[1],center[2],l, w, h, ry])))
+            proposals.append(ProposalObject(np.array([center[0],center[1],center[2],l, h, w, ry])))
             avg_y += obj.t[1]
 
         # TODO: negative samples
@@ -182,7 +226,8 @@ class Dataset(object):
             # doesn't skip label with no point here
             gt_boxes.append(obj_box_3d)
             gt_boxes_xy.append(obj_box_3d[:4, [0,2]])
-        proposals = self.load_proposals(data_idx)
+        # TODO: use proposals of RPN
+        proposals = self.get_proposals_gt(data_idx)
         positive_samples = []
         negative_samples = []
         show_boxes = []
@@ -211,12 +256,11 @@ class Dataset(object):
         return samples
 
     def get_sample(self, pc_rect, image, calib, proposal_, label=None):
-        # TODO: litmit y
         # expand proposal boxes
-        proposal = copy.deepcopy(proposal_)
-        # proposal.l += 1
-        # proposal.w += 1
-        _, box_3d = utils.compute_box_3d(proposal, calib.P)
+        proposal_expand = copy.deepcopy(proposal_)
+        proposal_expand.l += 1
+        proposal_expand.w += 1
+        _, box_3d = utils.compute_box_3d(proposal_expand, calib.P)
         _, mask = extract_pc_in_box3d(pc_rect, box_3d)
         if(np.sum(mask) == 0):
             return False
@@ -224,7 +268,9 @@ class Dataset(object):
         points = pc_rect[mask,:]
         points_with_feats = np.zeros((points.shape[0], self.num_channel))
         points_with_feats[:,:4] = points # xyz and intensity
-        points_with_feats[:,:3] -= proposal.t # normalize
+        # pooled points canonical transformation
+        points_with_feats[:,:3] -= proposal_.t
+        points_with_feats[:,:3] = rotate_points_along_y(points_with_feats[:,:3], proposal_.ry)
         points_with_feats[:,4:6] = np.array([1, 0]) # one hot
 
         sample = {}
@@ -237,8 +283,8 @@ class Dataset(object):
         # scale projection matrix
         sample['calib'][0,:] *= (1200.0 / image.shape[1])
         sample['calib'][1,:] *= (360.0 / image.shape[0])
-        sample['proposal_box'] = np.array([proposal.t[0], proposal.t[1], proposal.t[2],
-            proposal.ry, proposal.l, proposal.h, proposal.w])
+        sample['proposal_box'] = np.array([proposal_.t[0], proposal_.t[1], proposal_.t[2],
+            proposal_.l, proposal_.h, proposal_.w, proposal_.ry])
         sample['center_cls'] = np.zeros((2,), dtype=np.int32)
         sample['center_res'] = np.zeros((3,))
         sample['angle_cls'] = 0
@@ -248,7 +294,10 @@ class Dataset(object):
         sample['gt_box'] = np.zeros((8,3))
         if label:
             sample['class'] = g_type2onehotclass[label.type]
-            obj_vec = box_encoder.encode(label, proposal.t)
+            # rotation canonical transformation
+            label_norm = copy.deepcopy(label)
+            label_norm.ry = label.ry - proposal_.ry
+            obj_vec = box_encoder.encode(label_norm, proposal_.t)
             # test
             # sample['proposal_box'] = np.array([label.t[0], label.t[1], label.t[2],
             #     label.ry, label.l, label.h, label.w])
@@ -263,12 +312,13 @@ class Dataset(object):
             sample['gt_box'] = gt_box_3d
             _, gt_mask = extract_pc_in_box3d(points, gt_box_3d)
             sample['pointcloud'][gt_mask,4:6] = np.array([0, 1]) # one hot
+            # self.viz_sample(sample)
         return sample
 
 if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
-    dataset = Dataset(512, kitti_path, split)
+    dataset = Dataset(512, kitti_path, split, ['Car'], [0])
     dataset.load('./train', True)
 
     sys.path.append('../models')
@@ -335,5 +385,3 @@ if __name__ == '__main__':
     dataset.stop_loading()
     print('stop loading')
     produce_thread.join()
-    '''
-    '''

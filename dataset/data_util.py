@@ -45,11 +45,11 @@ def np_read_lines(filename, lines):
 
 class ProposalObject(object):
     def __init__(self, box_3d, score=0.0, type='Car', roi_features=None):
-        # [x, y, z, l, w, h, ry]
+        # [x, y, z, l, h, w, ry]
         self.t = box_3d[0:3]
         self.l = box_3d[3]
-        self.w = box_3d[4]
-        self.h = box_3d[5]
+        self.h = box_3d[4]
+        self.w = box_3d[5]
         self.ry = box_3d[6]
         self.score = score
         self.type = type

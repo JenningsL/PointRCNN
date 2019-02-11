@@ -22,6 +22,7 @@ from collections import namedtuple
 NUM_HEADING_BIN = 12
 NUM_CENTER_BIN = 12
 CENTER_SEARCH_RANGE = 3.0
+HEADING_SEARCH_RANGE = np.pi
 NUM_CHANNEL = 4
 
 class RPN(object):
@@ -33,7 +34,7 @@ class RPN(object):
         self.bn_decay = bn_decay
         self.is_training = is_training
         self.end_points = {}
-        self.box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, NUM_HEADING_BIN)
+        self.box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
         self.placeholders = self.get_placeholders()
         self.build()
 
@@ -365,8 +366,7 @@ class RPN(object):
         hcls_onehot = tf.one_hot(labels_fg['heading_bin_labels'],
             depth=NUM_HEADING_BIN,
             on_value=1, off_value=0, axis=-1) # BxNxNUM_HEADING_BIN
-        heading_residual_normalized_label = \
-            labels_fg['heading_residuals_labels'] / (2*np.pi/float(NUM_HEADING_BIN))
+        heading_residual_normalized_label = labels_fg['heading_residuals_labels']
         heading_res_dist = tf.norm(tf.reduce_sum( \
             end_points['heading_residuals_normalized']*tf.to_float(hcls_onehot), axis=2) - \
             heading_residual_normalized_label)
@@ -386,12 +386,7 @@ class RPN(object):
         predicted_size_residual_normalized = tf.reduce_sum( \
             end_points['size_residuals_normalized']*scls_onehot_tiled, axis=2) # BxNx3
 
-        mean_size_arr_expand = tf.expand_dims(tf.expand_dims( \
-            tf.constant(type_mean_size, dtype=tf.float32),0), 0) # NUM_SIZE_CLUSTERx3 -> 1x1xNUM_SIZE_CLUSTERx3
-        mean_size_arr_expand_tiled = tf.tile(mean_size_arr_expand, [batch_size, NUM_FG_POINT, 1, 1])
-        mean_size_label = tf.reduce_sum( \
-            scls_onehot_tiled * mean_size_arr_expand_tiled, axis=2) # BxNx3
-        size_residual_label_normalized = labels_fg['size_residuals_labels'] / mean_size_label # BxNx3
+        size_residual_label_normalized = labels_fg['size_residuals_labels'] # BxNx3
 
         size_dist = tf.norm(size_residual_label_normalized - predicted_size_residual_normalized, axis=-1)
         size_res_loss = huber_loss(size_dist, delta=1.0)

@@ -6,6 +6,7 @@ import argparse
 import importlib
 import numpy as np
 import tensorflow as tf
+slim = tf.contrib.slim
 import pickle
 from threading import Thread
 from datetime import datetime
@@ -129,7 +130,12 @@ def train():
             # Note: when training, the moving_mean and moving_variance need to be updated.
             update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
             with tf.control_dependencies(update_ops):
-                train_op = optimizer.minimize(loss, global_step=batch)
+                #train_op = optimizer.minimize(loss, global_step=batch)
+                train_op = slim.learning.create_train_op(
+                    loss,
+                    optimizer,
+                    clip_gradient_norm=1.0,
+                    global_step=batch)
 
             # Add ops to save and restore all the variables.
             saver = tf.train.Saver()
@@ -172,7 +178,7 @@ def train():
             train_one_epoch(sess, ops, placeholders, train_writer)
             save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
             log_string("Model saved in file: {0}".format(save_path))
-            val_loss = eval_one_epoch(sess, ops, pls, test_writer)
+            val_loss = eval_one_epoch(sess, ops, placeholders, test_writer)
     TRAIN_DATASET.stop_loading()
     train_produce_thread.join()
     TEST_DATASET.stop_loading()
