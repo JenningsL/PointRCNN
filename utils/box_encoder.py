@@ -2,10 +2,10 @@ import tensorflow as tf
 import numpy as np
 import math
 
-# Car, Pedestrian, Cyclist
-type_mean_size = np.array([[3.88311640418,1.62856739989,1.52563191462],
-    [0.84422524,0.66068622,1.76255119],
-    [1.76282397,0.59706367,1.73698127]])
+# Car, Pedestrian, Cyclist (l,h,w)
+type_mean_size = np.array([[3.88311640418,1.52563191462,1.62856739989],
+    [0.84422524,1.76255119,0.66068622],
+    [1.76282397,1.73698127,0.59706367]])
 NUM_SIZE_CLUSTER = type_mean_size.shape[0] # one cluster for each type
 NUM_OBJ_CLASSES = 4
 
@@ -54,7 +54,7 @@ class BoxEncoder(object):
         todo (rqi): support multiple size clusters per type.
 
         Input:
-            size: numpy array of shape (3,) for (l,w,h)
+            size: numpy array of shape (3,) for (l,h,w)
             type_name: string
         Output:
             size_class: int scalar
@@ -103,7 +103,7 @@ class BoxEncoder(object):
         ## encode heading
         angle_cls, angle_res = self.angle2class(obj.ry)
         # print(angle_cls, angle_res)
-        size_cls, size_res = self.size2class(np.array([obj.l,obj.w,obj.h]))
+        size_cls, size_res = self.size2class(np.array([obj.l,obj.h,obj.w]))
         return center_cls, center_res, angle_cls,angle_res, size_cls, size_res
 
     def tf_decode(self, end_points):
@@ -233,6 +233,6 @@ if __name__ == '__main__':
         c, a, s = sess.run([centers, angles, sizes])
         print(obj.t, '<->', c[0][0])
         print(obj.ry, '<->', a[0][0])
-        print([obj.l, obj.w, obj.h], '<->', s[0][0])
+        print([obj.l, obj.h, obj.w], '<->', s[0][0])
         corners_list = sess.run(corners_3d)
         print(corners_list)

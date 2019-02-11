@@ -32,8 +32,7 @@ def compute_box3d_iou(pred_boxes, gt_boxes, nms_indices):
     for i in range(len(pred_boxes)):
         ind = nms_indices[i]
         ind = ind[ind!=-1]
-        #for corners_3d, corners_3d_label in zip(pred_boxes[i,ind], gt_boxes[i,ind]):
-        for corners_3d, corners_3d_label in zip(pred_boxes[i], gt_boxes[i]):
+        for corners_3d, corners_3d_label in zip(pred_boxes[i,ind], gt_boxes[i,ind]):
             iou_3d, iou_2d = box3d_iou(corners_3d, corners_3d_label)
             iou3d_list.append(iou_3d)
             iou2d_list.append(iou_2d)
