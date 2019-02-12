@@ -320,7 +320,7 @@ class RPN(object):
         # 3D Segmentation loss
         mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(pls['seg_labels'], 2, axis=-1))
         tf.summary.scalar('mask loss', mask_loss)
-        return mask_loss, {}
+        #return mask_loss, {}
         # gather box estimation labels of foreground points
         labels_fg = {}
         for k in pls.keys():
@@ -367,9 +367,8 @@ class RPN(object):
             depth=NUM_HEADING_BIN,
             on_value=1, off_value=0, axis=-1) # BxNxNUM_HEADING_BIN
         heading_residual_normalized_label = labels_fg['heading_residuals_labels']
-        heading_res_dist = tf.norm(tf.reduce_sum( \
-            end_points['heading_residuals_normalized']*tf.to_float(hcls_onehot), axis=2) - \
-            heading_residual_normalized_label)
+        heading_res_dist = tf.norm(heading_residual_normalized_label - tf.reduce_sum( \
+            end_points['heading_residuals_normalized']*tf.to_float(hcls_onehot), axis=2))
         heading_res_loss = huber_loss(heading_res_dist, delta=1.0)
         tf.summary.scalar('heading class loss', heading_class_loss)
         tf.summary.scalar('heading residual loss', heading_res_loss)
