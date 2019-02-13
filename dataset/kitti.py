@@ -186,13 +186,23 @@ class Dataset(object):
             pc_rect[:,0] *= -1
             for obj in objects:
                 obj.t = [-obj.t[0], obj.t[1], obj.t[2]]
-                obj.ry = np.pi - obj.ry
+                # ensure that ry is [-pi, pi]
+                if obj.ry >= 0:
+                    obj.ry = np.pi - obj.ry
+                else:
+                    obj.ry = -np.pi - obj.ry
+
         if random_rotate:
             ry = (np.random.random() - 0.5) * math.radians(20) # -10~10 degrees
             pc_rect[:,0:3] = rotate_points_along_y(pc_rect[:,0:3], ry)
             for obj in objects:
                 obj.t = rotate_points_along_y(obj.t, ry)
                 obj.ry -= ry
+                # ensure that ry is [-pi, pi]
+                if obj.ry > np.pi:
+                    obj.ry -= 2*np.pi
+                elif obj.ry < -np.pi:
+                    obj.ry += 2*np.pi
         proposal_of_point = {} # point index to proposal vector
         gt_box_of_point = {} # point index to corners_3d
         for obj in objects:
