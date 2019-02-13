@@ -87,7 +87,7 @@ def get_bn_decay(batch):
 TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train')
 # data loading threads
 # FIXME: don't use data augmentation with image feature before calib matrix is adjust accordingly
-train_produce_thread = Thread(target=TRAIN_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train', False))
+train_produce_thread = Thread(target=TRAIN_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train', True))
 train_produce_thread.start()
 
 def train():
@@ -143,7 +143,8 @@ def train():
 
         # Create a session
         config = tf.ConfigProto()
-        config.gpu_options.allow_growth = True
+        #config.gpu_options.allow_growth = True
+        config.gpu_options.allow_growth = False
         config.allow_soft_placement = True
         config.log_device_placement = False
         sess = tf.Session(config=config)
@@ -172,7 +173,8 @@ def train():
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
             # eval iou and recall is slow
-            eval_iou_recall = (epoch > 10 and epoch % 2 == 0)
+            #eval_iou_recall = (epoch > 10 and epoch % 2 == 0)
+            eval_iou_recall = epoch % 2 == 0
             train_one_epoch(sess, ops, placeholders, train_writer, eval_iou_recall)
             #if epoch % 3 == 0:
             # Save the variables to disk.
