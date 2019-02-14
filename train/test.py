@@ -16,6 +16,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 from kitti import Dataset
 from train_util import compute_proposal_recall, compute_box3d_iou
+from model_util import NUM_FG_POINT
 from rpn import RPN
 
 parser = argparse.ArgumentParser()
@@ -68,15 +69,15 @@ def test():
     num_batches = 0
 
     frame_ids = []
-    pointclouds = []
-    preds = []
-    labels = []
-    fg_points = []
+    segmentation = []
     fg_indices = []
+    centers = []
+    angles = []
+    sizes = []
     proposal_boxes = []
     gt_boxes = []
-    point_gt_boxes = []
     nms_indices = []
+    scores = []
 
     while(True):
         batch_data, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE, need_id=True)
@@ -100,10 +101,18 @@ def test():
         }
 
         start = datetime.now()
-        logits_val, points_val, indices_val, boxes_val, pts_boxes_val, ind_val = sess.run([
-            end_points['foreground_logits'], end_points['fg_points'],
-            end_points['fg_point_indices'], end_points['proposal_boxes'],
-            end_points['gt_box_of_point'], end_points['nms_indices']], feed_dict=feed_dict)
+
+        box_center, box_angle, box_size = box_encoder.tf_decode(end_points)
+        box_center = box_center + end_points['fg_points_xyz']
+        box_center = tf.reshape(box_center, [BATCH_SIZE * NUM_FG_POINT,3])
+        box_angle = tf.reshape(box_angle, [BATCH_SIZE * NUM_FG_POINT])
+        box_size = tf.reshape(box_size, [BATCH_SIZE * NUM_FG_POINT,3])
+
+        logits_val, indices_val, centers_val, angles_val, sizes_val, corners_val, ind_val, scores
+        \ = sess.run([
+            end_points['foreground_logits'], end_points['fg_point_indices'],
+            box_center, box_angle, box_size, end_points['proposal_boxes'],
+            end_points['nms_indices'], end_points['proposal_scores']], feed_dict=feed_dict)
         print('inference time: ', datetime.now() - start)
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
@@ -111,24 +120,28 @@ def test():
         # results
         for i in range(BATCH_SIZE):
             frame_ids.append(batch_data['ids'][i])
-            #pointclouds.append(batch_pc[i])
-            #preds.append(preds_val[i])
-            labels.append(batch_data['seg_label'][i])
-            #fg_points.append(points_val[i])
-            #fg_indices.append(indices_val[i])
-            proposal_boxes.append(boxes_val[i])
-            gt_boxes.append(batch_data['gt_boxes'][i])
-            #point_gt_boxes.append(pts_boxes_val[i])
+            segmentation.append(preds_val[i])
+            centers.append(centers_val[i])
+            angles.append(angles_val[i])
+            sizes.append(sizes_val[i])
+            proposal_boxes.append(corners_val[i])
             nms_indices.append(ind_val[i])
+            scores.append(scores_val[i])
+            gt_boxes.append(batch_data['gt_boxes'][i])
         if is_last_batch:
         #if num_batches >= 500:
             break
 
-    with open('prediction.pkl','wb') as fp:
+    with open('rpn_out.pkl','wb') as fp:
         pickle.dump(frame_ids, fp)
+        pickle.dump(segmentation, fp)
+        pickle.dump(centers, fp)
+        pickle.dump(angles, fp)
+        pickle.dump(sizes, fp)
         pickle.dump(proposal_boxes, fp)
-        pickle.dump(gt_boxes, fp)
         pickle.dump(nms_indices, fp)
+        pickle.dump(scores, fp)
+        pickle.dump(gt_boxes, fp)
         #pickle.dump(point_gt_boxes, fp)
     log_string('saved prediction')
     TEST_DATASET.stop_loading()

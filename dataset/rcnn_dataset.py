@@ -53,6 +53,7 @@ class Dataset(object):
         # preloading
         self.stop = False
         self.data_buffer = Queue(maxsize=128)
+        self._load_proposals('rpn_out.pkl')
 
     def load_split_ids(self, split):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
@@ -174,30 +175,29 @@ class Dataset(object):
     def _load_proposals(self, proposal_path):
         with open(proposal_path, 'rb') as f:
             frame_ids = pickle.load(f)
+            segmentation = pickle.load(f)
+            centers = pickle.load(f)
+            angles = pickle.load(f)
+            sizes = pickle.load(f)
             proposal_boxes = pickle.load(f)
+            nms_indices = pickle.load(f)
             scores = pickle.load(f)
+            gt_boxes = pickle.load(f)
         self.proposals = {}
         for i in range(len(frame_ids)):
-            # to ProposalObject
-            self.proposals[frame_ids[i]] = proposal_boxes[i]
+            for j in len(centers[i]):
+                # to ProposalObject
+                x,y,z = centers[i][j]
+                l, h, w = sizes[i][j]
+                ry = angles[i][j]
+                proposal = ProposalObject(np.array([x,y,z,l, h, w, ry]))
+                frame_id = frame_ids[i]
+                if frame_id not in self.proposals:
+                    self.proposals = []
+                self.proposals[].append(proposal)
 
     def get_proposals(self, data_idx):
-        # Get proposals from rpn output
-        objects = self.kitti_dataset.get_label_objects(data_idx)
-        objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
-        proposals = []
-        avg_y = 0
-        for obj in objects:
-            center = obj.t + np.random.normal(0, 0.1, 3)
-            ry = obj.ry + np.random.normal(0, np.pi/8, 1)
-            l = obj.l + np.random.normal(0, 0.1, 1)[0]
-            h = obj.h + np.random.normal(0, 0.1, 1)[0]
-            w = obj.w + np.random.normal(0, 0.1, 1)[0]
-            proposals.append(ProposalObject(np.array([center[0],center[1],center[2],l, h, w, ry])))
-            avg_y += obj.t[1]
-
-        # TODO: negative samples
-        return proposals
+        return self.proposals[data_idx]
 
     def load_frame_data(self, data_idx_str,
         random_flip=False, random_rotate=False, random_shift=False):
@@ -227,7 +227,8 @@ class Dataset(object):
             gt_boxes.append(obj_box_3d)
             gt_boxes_xy.append(obj_box_3d[:4, [0,2]])
         # TODO: use proposals of RPN
-        proposals = self.get_proposals_gt(data_idx)
+        # proposals = self.get_proposals_gt(data_idx)
+        proposals = self.get_proposals(data_idx)
         positive_samples = []
         negative_samples = []
         show_boxes = []
