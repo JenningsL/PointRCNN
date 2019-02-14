@@ -17,6 +17,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 from kitti import Dataset
 from train_util import compute_proposal_recall, compute_box3d_iou
 from model_util import NUM_FG_POINT
+from box_encoder import BoxEncoder
 from rpn import RPN
 
 parser = argparse.ArgumentParser()
@@ -35,7 +36,8 @@ GPU_INDEX = FLAGS.gpu
 def log_string(out_str):
     print(out_str)
 
-TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', types=['Car'], difficulties=[1])
+#TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', types=['Car'], difficulties=[1])
+TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
 
 def test():
     # data loading threads
@@ -50,6 +52,13 @@ def test():
             rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=is_training)
             pls = rpn_model.placeholders
             end_points = rpn_model.end_points
+
+            box_center, box_angle, box_size = rpn_model.box_encoder.tf_decode(end_points)
+            box_center = box_center + end_points['fg_points_xyz']
+            box_center = tf.reshape(box_center, [BATCH_SIZE * NUM_FG_POINT,3])
+            box_angle = tf.reshape(box_angle, [BATCH_SIZE * NUM_FG_POINT])
+            box_size = tf.reshape(box_size, [BATCH_SIZE * NUM_FG_POINT,3])
+
             saver = tf.train.Saver()
 
         # Create a session
@@ -102,14 +111,8 @@ def test():
 
         start = datetime.now()
 
-        box_center, box_angle, box_size = box_encoder.tf_decode(end_points)
-        box_center = box_center + end_points['fg_points_xyz']
-        box_center = tf.reshape(box_center, [BATCH_SIZE * NUM_FG_POINT,3])
-        box_angle = tf.reshape(box_angle, [BATCH_SIZE * NUM_FG_POINT])
-        box_size = tf.reshape(box_size, [BATCH_SIZE * NUM_FG_POINT,3])
-
-        logits_val, indices_val, centers_val, angles_val, sizes_val, corners_val, ind_val, scores
-        \ = sess.run([
+        logits_val, indices_val, centers_val, angles_val, sizes_val, corners_val, ind_val, scores_val \
+        = sess.run([
             end_points['foreground_logits'], end_points['fg_point_indices'],
             box_center, box_angle, box_size, end_points['proposal_boxes'],
             end_points['nms_indices'], end_points['proposal_scores']], feed_dict=feed_dict)
