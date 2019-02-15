@@ -186,6 +186,7 @@ class Dataset(object):
         self.proposals = {}
         self.pc_choices = {}
         self.pc_seg = {}
+        print('Non empty frames: ', len(frame_ids))
         for i in range(len(frame_ids)):
             frame_id = frame_ids[i]
             self.pc_choices[frame_id] = pc_choices[i]
@@ -256,6 +257,8 @@ class Dataset(object):
             calib, 0, 0, img_width, img_height, True)
         pc_velo = pc_velo[img_fov_inds, :]
         # Same point sampling as RPN
+        if data_idx_str not in self.pc_choices:
+            return []
         choice = self.pc_choices[data_idx_str]
         point_set = pc_velo[choice, :]
         pc_rect = np.zeros_like(point_set)
@@ -353,6 +356,8 @@ class Dataset(object):
             sample['angle_res'] = obj_vec[3]
             sample['size_cls'] = obj_vec[4]
             sample['size_res'] = obj_vec[5]
+            _, gt_box_3d = utils.compute_box_3d(label, calib.P)
+            sample['gt_box'] = gt_box_3d
             # self.viz_sample(sample)
         return sample
 

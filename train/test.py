@@ -25,6 +25,7 @@ parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU
 parser.add_argument('--num_point', type=int, default=16384, help='Point Number [default: 16384]')
 parser.add_argument('--batch_size', type=int, default=32, help='Batch Size during training [default: 32]')
 parser.add_argument('--model_path', default=None, help='Restore model path e.g. log/model.ckpt [default: None]')
+parser.add_argument('--split', default='val', help='Data split to use [default: val]')
 FLAGS = parser.parse_args()
 
 # Set training configurations
@@ -32,12 +33,14 @@ EPOCH_CNT = 0
 BATCH_SIZE = FLAGS.batch_size
 NUM_POINT = FLAGS.num_point
 GPU_INDEX = FLAGS.gpu
+SPLIT = FLAGS.split
 
 def log_string(out_str):
     print(out_str)
 
 
-def test(dataset):
+def test(split):
+    dataset = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', split)
     # data loading threads
     produce_thread = Thread(target=dataset.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val',False))
     produce_thread.start()
@@ -135,7 +138,7 @@ def test(dataset):
         #if num_batches >= 500:
             break
 
-    with open('rpn_out.pkl','wb') as fp:
+    with open('rpn_out_{0}.pkl'.format(split),'wb') as fp:
         pickle.dump(frame_ids, fp)
         pickle.dump(segmentation, fp)
         pickle.dump(centers, fp)
@@ -162,6 +165,4 @@ def test(dataset):
 if __name__ == "__main__":
     log_string('pid: %s'%(str(os.getpid())))
     #TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', types=['Car'], difficulties=[1])
-    TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
-    TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train')
-    test(TRAIN_DATASET)
+    test(SPLIT)
