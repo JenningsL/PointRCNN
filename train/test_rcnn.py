@@ -47,22 +47,6 @@ def get_calibration(idx):
         calib_cache[idx] = TEST_DATASET.kitti_dataset.get_calibration(idx)
     return calib_cache[idx]
 
-def get_output_boxes(model):
-    end_points = {}
-    # adapt the dimension
-    for k in ['center_x_scores', 'center_x_residuals_normalized',
-        'center_z_scores', 'center_z_residuals_normalized',
-        'center_y_residuals', 'heading_scores', 'heading_residuals_normalized',
-        'size_scores', 'size_residuals_normalized']:
-        end_points[k] = tf.expand_dims(model.end_points[k], axis=1)
-    box_center, box_angle, box_size = model.box_encoder.tf_decode(end_points)
-    box_center = tf.squeeze(box_center, axis=1)
-    box_center = box_center + tf.slice(model.placeholders['proposal_boxes'], [0,0], [-1,3])
-    box_angle = tf.squeeze(box_angle, axis=1)
-    box_angle += tf.gather(model.placeholders['proposal_boxes'], 6, axis=-1) # resotre absoluate angle
-    box_size = tf.squeeze(box_size, axis=1)
-    return box_center, box_angle, box_size
-
 class DetectObject(object):
     def __init__(self, h,w,l,tx,ty,tz,ry, frame_id, type_label, score, box_2d=None, box_3d=None):
         self.t = [tx,ty,tz]
@@ -93,8 +77,6 @@ def test():
             end_points = rcnn_model.end_points
             loss, loss_endpoints = rcnn_model.get_loss()
 
-            center_op, angle_op, size_op  = get_output_boxes(rcnn_model)
-
             # Add ops to save and restore all the variables.
             saver = tf.train.Saver()
 
@@ -107,9 +89,6 @@ def test():
 
         saver.restore(sess, FLAGS.restore_model_path)
 
-    frame_ids = []
-    classes = []
-    boxes = []
     objects = {}
     while(True):
         batch_data, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
@@ -132,8 +111,10 @@ def test():
             pls['is_training_pl']: is_training
         }
 
-        cls_logits, box_center, box_angle, box_size, corners = \
-                sess.run([end_points['cls_logits'], center_op, angle_op, size_op, end_points['output_boxes']], feed_dict=feed_dict)
+        cls_logits, box_center, box_angle, box_size, box_score, corners = \
+                sess.run([end_points['cls_logits'],
+                end_points['box_center'], end_points['box_angle'], end_points['box_size'],
+                end_points['box_score'], end_points['box_corners']], feed_dict=feed_dict)
         cls_val = np.argmax(cls_logits, axis=-1)
         correct = np.sum(cls_val == batch_data['label'])
         for i in range(BATCH_SIZE):
@@ -141,13 +122,12 @@ def test():
                 #print('NonObject')
                 continue
             idx = int(batch_data['ids'][i])
-            frame_ids.append(idx)
-            classes.append(cls_val[i])
             size = box_size[i]
             angle = box_angle[i]
             center = box_center[i]
             box_corner = corners[i]
-            obj = DetectObject(size[1],size[2],size[0],center[0],center[1],center[2],angle,idx,type_list[cls_val[i]],1.0)
+            score = box_score[i]
+            obj = DetectObject(size[1],size[2],size[0],center[0],center[1],center[2],angle,idx,type_list[cls_val[i]],score)
             #calib = get_calibration(idx)
             calib = batch_data['calib'][i]
             box3d_pts_2d, box3d_pts_3d = utils.compute_box_3d(obj, calib)
@@ -274,4 +254,3 @@ if __name__ == "__main__":
     log_string('pid: %s'%(str(os.getpid())))
     test()
     #load()
-

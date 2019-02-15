@@ -113,7 +113,7 @@ def train():
             loss, loss_endpoints = rcnn_model.get_loss()
 
             iou2ds, iou3ds = tf.py_func(train_util.compute_box3d_iou, [
-                    tf.expand_dims(end_points['output_boxes'], 1),
+                    tf.expand_dims(end_points['box_corners'], 1),
                     tf.expand_dims(placeholders['gt_box_of_prop'], 1),
                     tf.expand_dims(tf.to_int32(tf.equal(placeholders['class_labels'], 0))*tf.constant(-1), 1)
                 ], [tf.float32, tf.float32])
@@ -225,11 +225,11 @@ def train_one_epoch(sess, ops, pls, train_writer):
             pls['is_training_pl']: is_training
         }
 
-        summary, step, loss_val, _, iou2ds, iou3ds, logits_val, output_boxes \
+        summary, step, loss_val, _, iou2ds, iou3ds, logits_val, box_corners \
         = sess.run([
             ops['merged'], ops['step'], ops['loss'], ops['train_op'],
             ops['iou2ds'], ops['iou3ds'], ops['end_points']['cls_logits'],
-            ops['end_points']['output_boxes']], feed_dict=feed_dict)
+            ops['end_points']['box_corners']], feed_dict=feed_dict)
         iou2ds_sum += np.sum(iou2ds)
         iou3ds_sum += np.sum(iou3ds)
         total_pos += len(iou2ds)
@@ -325,11 +325,11 @@ def eval_one_epoch(sess, ops, pls, test_writer):
             pls['is_training_pl']: is_training
         }
 
-        summary, step, loss_val, iou2ds, iou3ds, logits_val, output_boxes \
+        summary, step, loss_val, iou2ds, iou3ds, logits_val, box_corners \
         = sess.run([
             ops['merged'], ops['step'], ops['loss'],
             ops['iou2ds'], ops['iou3ds'], ops['end_points']['cls_logits'],
-            ops['end_points']['output_boxes']], feed_dict=feed_dict)
+            ops['end_points']['box_corners']], feed_dict=feed_dict)
         iou2ds_sum += np.sum(iou2ds)
         iou3ds_sum += np.sum(iou3ds)
         total_pos += len(iou2ds)

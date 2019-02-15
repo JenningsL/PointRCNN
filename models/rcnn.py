@@ -208,8 +208,20 @@ class RCNN(object):
         box_angle = tf.squeeze(box_angle, axis=1)
         box_angle += tf.gather(self.placeholders['proposal_boxes'], 6, axis=-1) # resotre absoluate angle
         box_size = tf.squeeze(box_size, axis=1)
+        self.end_points['box_center'] = box_center
+        self.end_points['box_angle'] = box_angle
+        self.end_points['box_size'] = box_size
         corners_3d = get_box3d_corners_helper(box_center, box_angle, box_size)
-        self.end_points['output_boxes'] = corners_3d
+        self.end_points['box_corners'] = corners_3d
+        # box score
+        seg_scores = tf.reduce_max(tf.nn.softmax(self.end_points['cls_logits']), axis=-1) # (B,)
+        bin_x_scores = tf.reduce_max(tf.nn.softmax(self.end_points['center_x_scores']), axis=-1) # (B,M)
+        bin_z_scores = tf.reduce_max(tf.nn.softmax(self.end_points['center_z_scores']), axis=-1) # (B,M)
+        heading_scores = tf.reduce_max(tf.nn.softmax(self.end_points['heading_scores']), axis=-1) # (B,M)
+        size_scores = tf.reduce_max(tf.nn.softmax(self.end_points['size_scores']), axis=-1) # (B,M)
+        # confidence = seg_scores + bin_x_scores + bin_z_scores + heading_scores + size_scores
+        confidence = seg_scores * bin_x_scores * bin_z_scores * heading_scores * size_scores
+        self.end_points['box_score'] = confidence
         return corners_3d
 
     def get_loss(self):
