@@ -53,7 +53,7 @@ class Dataset(object):
         # preloading
         self.stop = False
         self.data_buffer = Queue(maxsize=128)
-        self._load_proposals('rpn_out.pkl')
+        self._load_proposals('rpn_out_{0}.pkl'.format(split))
 
     def load_split_ids(self, split):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
@@ -185,19 +185,56 @@ class Dataset(object):
             gt_boxes = pickle.load(f)
         self.proposals = {}
         for i in range(len(frame_ids)):
-            for j in len(centers[i]):
+            for j in range(len(centers[i])):
+                if nms_indices[i][j] == -1:
+                    continue
                 # to ProposalObject
                 x,y,z = centers[i][j]
                 l, h, w = sizes[i][j]
                 ry = angles[i][j]
                 proposal = ProposalObject(np.array([x,y,z,l, h, w, ry]))
-                frame_id = frame_ids[i]
+                frame_id = int(frame_ids[i])
                 if frame_id not in self.proposals:
-                    self.proposals = []
-                self.proposals[].append(proposal)
+                    self.proposals[frame_id] = []
+                self.proposals[frame_id].append(proposal)
 
     def get_proposals(self, data_idx):
-        return self.proposals[data_idx]
+        if data_idx in self.proposals:
+            return self.proposals[data_idx]
+        else:
+            return []
+
+    def stat_proposal(self):
+        '''statistic of proposals'''
+        total_iou_3d = 0
+        total_iou_2d = 0
+        total_angle_res = 0
+        total = 0
+        for frame_id in self.frame_ids:
+            print(frame_id)
+            data_idx = int(frame_id)
+            calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
+            objects = self.kitti_dataset.get_label_objects(data_idx)
+            proposals = self.get_proposals(data_idx)
+            gt_boxes = [] # ground truth boxes
+            gt_boxes_xy = []
+            for obj in objects:
+                _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
+                # doesn't skip label with no point here
+                gt_boxes.append(obj_box_3d)
+                gt_boxes_xy.append(obj_box_3d[:4, [0,2]])
+            for prop in proposals:
+                b2d,prop_box_3d = utils.compute_box_3d(prop, calib.P)
+                prop_box_xy = prop_box_3d[:4, [0,2]]
+                gt_idx, gt_iou = find_match_label(prop_box_xy, gt_boxes_xy)
+                if gt_iou <= 0.55:
+                    continue
+                total_iou_2d += gt_iou
+                ry_residual = abs(prop.ry - objects[gt_idx].ry)
+                total_angle_res += ry_residual
+                total += 1
+        print('Average IOU 2d {0}'.format(total_iou_2d/total))
+        print('Average angle residual {0}'.format(total_angle_res/total))
 
     def load_frame_data(self, data_idx_str,
         random_flip=False, random_rotate=False, random_shift=False):
@@ -319,8 +356,11 @@ class Dataset(object):
 if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
-    dataset = Dataset(512, kitti_path, split, ['Car'], [0])
-    dataset.load('./train', True)
+
+    # statistic
+    dataset = Dataset(512, kitti_path, split)
+    dataset.stat_proposal()
+    sys.exit()
 
     sys.path.append('../models')
     from collections import namedtuple
@@ -329,6 +369,8 @@ if __name__ == '__main__':
     import projection
     VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
 
+    dataset = Dataset(512, kitti_path, split, ['Car'], [0])
+    dataset.load('./train', True)
     produce_thread = threading.Thread(target=dataset.load, args=('./train',True))
     produce_thread.start()
     i = 0

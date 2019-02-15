@@ -229,9 +229,9 @@ class RPN(object):
         #boxes_3d_list = []
         batch_nms_indices = []
         for i in range(len(confidence_unpack)):
-            nms_indices = tf.image.non_max_suppression(boxes_bev_unpack[i], confidence_unpack[i], 300)
+            nms_indices = tf.image.non_max_suppression(boxes_bev_unpack[i], confidence_unpack[i], 300) # at most 300
             #boxes_3d_list.append(tf.gather(boxes_3d_unpack[i], nms_indices))
-            nms_indices = tf.pad(nms_indices, [[0, 300-tf.shape(nms_indices)[0]]], mode='CONSTANT', constant_values=-1)
+            nms_indices = tf.pad(nms_indices, [[0, NUM_FG_POINT-tf.shape(nms_indices)[0]]], mode='CONSTANT', constant_values=-1)
             batch_nms_indices.append(nms_indices)
         end_points['nms_indices'] = tf.stack(batch_nms_indices, axis=0)
         return end_points

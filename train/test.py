@@ -36,13 +36,11 @@ GPU_INDEX = FLAGS.gpu
 def log_string(out_str):
     print(out_str)
 
-#TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', types=['Car'], difficulties=[1])
-TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
 
-def test():
+def test(dataset):
     # data loading threads
-    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val',False))
-    test_produce_thread.start()
+    produce_thread = Thread(target=dataset.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val',False))
+    produce_thread.start()
 
     is_training = False
     with tf.Graph().as_default():
@@ -55,9 +53,9 @@ def test():
 
             box_center, box_angle, box_size = rpn_model.box_encoder.tf_decode(end_points)
             box_center = box_center + end_points['fg_points_xyz']
-            box_center = tf.reshape(box_center, [BATCH_SIZE * NUM_FG_POINT,3])
-            box_angle = tf.reshape(box_angle, [BATCH_SIZE * NUM_FG_POINT])
-            box_size = tf.reshape(box_size, [BATCH_SIZE * NUM_FG_POINT,3])
+            #box_center = tf.reshape(box_center, [BATCH_SIZE * NUM_FG_POINT,3])
+            #box_angle = tf.reshape(box_angle, [BATCH_SIZE * NUM_FG_POINT])
+            #box_size = tf.reshape(box_size, [BATCH_SIZE * NUM_FG_POINT,3])
 
             saver = tf.train.Saver()
 
@@ -89,7 +87,7 @@ def test():
     scores = []
 
     while(True):
-        batch_data, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE, need_id=True)
+        batch_data, is_last_batch = dataset.get_next_batch(BATCH_SIZE, need_id=True)
 
         feed_dict = {
             pls['pointclouds']: batch_data['pointcloud'],
@@ -147,8 +145,8 @@ def test():
         pickle.dump(gt_boxes, fp)
         #pickle.dump(point_gt_boxes, fp)
     log_string('saved prediction')
-    TEST_DATASET.stop_loading()
-    test_produce_thread.join()
+    dataset.stop_loading()
+    produce_thread.join()
 
     '''
     all_indices = np.tile(np.arange(1024), (len(proposal_boxes),))
@@ -161,4 +159,8 @@ def test():
 
 if __name__ == "__main__":
     log_string('pid: %s'%(str(os.getpid())))
-    test()
+    #TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', types=['Car'], difficulties=[1])
+    TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
+    TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train')
+    test(TRAIN_DATASET)
+
