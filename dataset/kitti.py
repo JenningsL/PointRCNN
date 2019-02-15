@@ -119,7 +119,8 @@ class Dataset(object):
             'angle_res': np.zeros((bsize,self.npoints), dtype=np.float32),
             'size_res': np.zeros((bsize, self.npoints, 3), dtype=np.float32),
             'gt_box_of_point': np.zeros((bsize, self.npoints, 8, 3), dtype=np.float32),
-            'gt_boxes': []
+            'gt_boxes': [],
+            'pc_choice': [] # remember indices for sampling pointcloud in RCNN
         }
         for i in range(bsize):
             frame = self.data_buffer.get()
@@ -142,6 +143,7 @@ class Dataset(object):
             batch['size_res'][i,...] = size_res
             batch['gt_box_of_point'][i,...] = frame['gt_box_of_point']
             batch['gt_boxes'].append(frame['gt_boxes'])
+            batch['pc_choice'].append(frame['pc_choice'])
         if self.batch_idx == total_batch - 1:
             is_last_batch = True
             self.batch_idx = 0
@@ -234,7 +236,8 @@ class Dataset(object):
             'mask_label': seg_mask,
             'proposal_of_point': self.get_proposal_out(proposal_of_point),
             'gt_box_of_point': self.get_gt_box_of_points(gt_box_of_point),
-            'gt_boxes': gt_boxes
+            'gt_boxes': gt_boxes,
+            'pc_choice': choice
         }
 
 if __name__ == '__main__':

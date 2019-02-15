@@ -76,7 +76,6 @@ def test(dataset):
     num_batches = 0
 
     frame_ids = []
-    segmentation = []
     fg_indices = []
     centers = []
     angles = []
@@ -85,6 +84,8 @@ def test(dataset):
     gt_boxes = []
     nms_indices = []
     scores = []
+    segmentation = [] # point segmentation
+    pc_choices = [] # point sampling indices
 
     while(True):
         batch_data, is_last_batch = dataset.get_next_batch(BATCH_SIZE, need_id=True)
@@ -129,6 +130,7 @@ def test(dataset):
             nms_indices.append(ind_val[i])
             scores.append(scores_val[i])
             gt_boxes.append(batch_data['gt_boxes'][i])
+            pc_choices.append(batch_data['pc_choice'][i])
         if is_last_batch:
         #if num_batches >= 500:
             break
@@ -142,8 +144,8 @@ def test(dataset):
         pickle.dump(proposal_boxes, fp)
         pickle.dump(nms_indices, fp)
         pickle.dump(scores, fp)
-        pickle.dump(gt_boxes, fp)
-        #pickle.dump(point_gt_boxes, fp)
+        # pickle.dump(gt_boxes, fp)
+        pickle.dump(pc_choices, fp)
     log_string('saved prediction')
     dataset.stop_loading()
     produce_thread.join()
@@ -163,4 +165,3 @@ if __name__ == "__main__":
     TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
     TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train')
     test(TRAIN_DATASET)
-

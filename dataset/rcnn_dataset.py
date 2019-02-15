@@ -182,9 +182,14 @@ class Dataset(object):
             proposal_boxes = pickle.load(f)
             nms_indices = pickle.load(f)
             scores = pickle.load(f)
-            gt_boxes = pickle.load(f)
+            pc_choices = pickle.load(f)
         self.proposals = {}
+        self.pc_choices = {}
+        self.pc_seg = {}
         for i in range(len(frame_ids)):
+            frame_id = frame_ids[i]
+            self.pc_choices[frame_id] = pc_choices[i]
+            self.pc_seg[frame_id] = segmentation[i]
             for j in range(len(centers[i])):
                 if nms_indices[i][j] == -1:
                     continue
@@ -250,11 +255,19 @@ class Dataset(object):
         _, pc_image_coord, img_fov_inds = get_lidar_in_image_fov(pc_velo[:,0:3],
             calib, 0, 0, img_width, img_height, True)
         pc_velo = pc_velo[img_fov_inds, :]
-        #print(data_idx_str, pc_velo.shape[0])
-        point_set = pc_velo
+        # Same point sampling as RPN
+        choice = self.pc_choices[data_idx_str]
+        point_set = pc_velo[choice, :]
         pc_rect = np.zeros_like(point_set)
         pc_rect[:,0:3] = calib.project_velo_to_rect(point_set[:,0:3])
         pc_rect[:,3] = point_set[:,3]
+        # Segmentation results from RPN
+        seg_one_hot = np.zeros((pc_rect.shape[0], 2))
+        bg_ind = self.pc_seg[data_idx_str] == 0
+        fg_ind = self.pc_seg[data_idx_str] == 1
+        seg_one_hot[bg_ind,0] = 1
+        seg_one_hot[fg_ind,1] = 1
+        pc_rect = np.concatenate((pc_rect, seg_one_hot), axis=-1) # 6 channels
         objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
         gt_boxes = [] # ground truth boxes
         gt_boxes_xy = []
@@ -263,7 +276,6 @@ class Dataset(object):
             # doesn't skip label with no point here
             gt_boxes.append(obj_box_3d)
             gt_boxes_xy.append(obj_box_3d[:4, [0,2]])
-        # TODO: use proposals of RPN
         # proposals = self.get_proposals_gt(data_idx)
         proposals = self.get_proposals(data_idx)
         positive_samples = []
@@ -305,11 +317,10 @@ class Dataset(object):
 
         points = pc_rect[mask,:]
         points_with_feats = np.zeros((points.shape[0], self.num_channel))
-        points_with_feats[:,:4] = points # xyz and intensity
+        points_with_feats[:,:6] = points # xyz, intensity, seg_one_hot
         # pooled points canonical transformation
         points_with_feats[:,:3] -= proposal_.t
         points_with_feats[:,:3] = rotate_points_along_y(points_with_feats[:,:3], proposal_.ry)
-        points_with_feats[:,4:6] = np.array([1, 0]) # one hot
 
         sample = {}
         self.sample_id_counter += 1
@@ -336,20 +347,12 @@ class Dataset(object):
             label_norm = copy.deepcopy(label)
             label_norm.ry = label.ry - proposal_.ry
             obj_vec = box_encoder.encode(label_norm, proposal_.t)
-            # test
-            # sample['proposal_box'] = np.array([label.t[0], label.t[1], label.t[2],
-            #     label.ry, label.l, label.h, label.w])
-
             sample['center_cls'] = obj_vec[0]
             sample['center_res'] = obj_vec[1]
             sample['angle_cls'] = obj_vec[2]
             sample['angle_res'] = obj_vec[3]
             sample['size_cls'] = obj_vec[4]
             sample['size_res'] = obj_vec[5]
-            _, gt_box_3d = utils.compute_box_3d(label, calib.P)
-            sample['gt_box'] = gt_box_3d
-            _, gt_mask = extract_pc_in_box3d(points, gt_box_3d)
-            sample['pointcloud'][gt_mask,4:6] = np.array([0, 1]) # one hot
             # self.viz_sample(sample)
         return sample
 
