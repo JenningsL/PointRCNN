@@ -310,8 +310,10 @@ class Dataset(object):
     def get_sample(self, pc_rect, image, calib, proposal_, max_iou, max_idx, objects):
         if max_iou >= 0.45:
             label = objects[max_idx]
-        else:
+        elif max_iou < 0.3:
             label = None
+        else:
+            return False
         # expand proposal boxes
         proposal_expand = copy.deepcopy(proposal_)
         proposal_expand.l += 1

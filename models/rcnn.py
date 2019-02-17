@@ -231,7 +231,7 @@ class RCNN(object):
             logits=end_points['cls_logits'], labels=self.placeholders['class_labels']))
         tf.summary.scalar('classification loss', cls_loss)
         # is_obj_mask = tf.to_float(tf.not_equal(self.placeholders['class_labels'], 0))
-        train_reg_mask = self.placeholders['train_regression']
+        train_reg_mask = tf.to_float(self.placeholders['train_regression'])
         center_x_cls_loss = tf.reduce_mean(train_reg_mask*tf.nn.sparse_softmax_cross_entropy_with_logits(\
            logits=end_points['center_x_scores'], labels=self.placeholders['center_bin_x_labels']))
         center_z_cls_loss = tf.reduce_mean(train_reg_mask*tf.nn.sparse_softmax_cross_entropy_with_logits(\
