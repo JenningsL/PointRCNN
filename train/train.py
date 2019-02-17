@@ -15,7 +15,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
-from kitti import Dataset
+from rpn_dataset import Dataset
 from model_util import NUM_FG_POINT
 from rpn import RPN
 import train_util
@@ -84,10 +84,10 @@ def get_bn_decay(batch):
     return bn_decay
 
 
-TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train')
+TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True)
 # data loading threads
 # FIXME: don't use data augmentation with image feature before calib matrix is adjust accordingly
-train_produce_thread = Thread(target=TRAIN_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train', True))
+train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
 train_produce_thread.start()
 
 def train():
@@ -297,8 +297,8 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
 
 
 def eval_one_epoch(sess, ops, pls, test_writer, more=False):
-    TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
-    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val', False))
+    TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=True)
+    test_produce_thread = Thread(target=TEST_DATASET.load, args=(False,))
     test_produce_thread.start()
 
     global EPOCH_CNT

@@ -31,14 +31,21 @@ HEADING_SEARCH_RANGE = 0.25*np.pi
 box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
 
 class Dataset(object):
-    def __init__(self, npoints, kitti_path, split, \
+    def __init__(self, npoints, kitti_path, split, is_training, \
         types=type_whitelist, difficulties=difficulties_whitelist):
         self.npoints = npoints
         self.kitti_path = kitti_path
         self.proposal_dir = os.path.join(kitti_path, 'training', 'proposal')
         #self.batch_size = batch_size
         self.split = split
-        self.kitti_dataset = kitti_object(kitti_path, 'training')
+        self.is_training = is_training
+        if split in ['train', 'val']:
+            self.kitti_dataset = kitti_object(kitti_path, 'training')
+        else:
+            self.kitti_dataset = kitti_object_video(
+                os.path.join(kitti_path, 'image_02/data'),
+                os.path.join(kitti_path, 'velodyne_points/data'),
+                kitti_path)
         self.frame_ids = self.load_split_ids(split)
         # random.shuffle(self.frame_ids)
         # self.frame_ids = self.frame_ids[:1]
@@ -59,7 +66,7 @@ class Dataset(object):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
             return [line.rstrip('\n') for line in f]
 
-    def load(self, save_path, aug=False):
+    def load(self, aug=False):
         i = 0
         last_sample_id = None
         while not self.stop:
@@ -251,7 +258,11 @@ class Dataset(object):
         data_idx = int(data_idx_str)
         # print(data_idx_str)
         calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
-        objects = self.kitti_dataset.get_label_objects(data_idx)
+        if self.is_training:
+            objects = self.kitti_dataset.get_label_objects(data_idx)
+        else:
+            # while testing, all proposals will have class 0
+            objects = []
         image = self.kitti_dataset.get_image(data_idx)
         pc_velo = self.kitti_dataset.get_lidar(data_idx)
         img_height, img_width = image.shape[0:2]
@@ -299,10 +310,11 @@ class Dataset(object):
             else:
                 positive_samples.append(sample)
                 show_boxes.append(prop_box_3d)
-        #print('positive:', len(positive_samples))
-        #print('negative:', len(negative_samples))
-        random.shuffle(negative_samples)
-        samples = positive_samples + negative_samples[:len(positive_samples)]
+        if self.is_training:
+            random.shuffle(negative_samples)
+            samples = positive_samples + negative_samples[:len(positive_samples)]
+        else:
+            samples = positive_samples + negative_samples
         random.shuffle(samples)
         # self.viz_frame(pc_rect, np.zeros((pc_rect.shape[0],)), show_boxes)
         return samples
@@ -310,9 +322,9 @@ class Dataset(object):
     def get_sample(self, pc_rect, image, calib, proposal_, max_iou, max_idx, objects):
         if max_iou >= 0.45:
             label = objects[max_idx]
-        elif max_iou < 0.3:
+        if max_iou < 0.3:
             label = None
-        else:
+        if self.is_training and max_iou >= 0.3 and max_iou < 0.45:
             return False
         # expand proposal boxes
         proposal_expand = copy.deepcopy(proposal_)
@@ -384,8 +396,7 @@ if __name__ == '__main__':
     VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
 
     dataset = Dataset(512, kitti_path, split, ['Car'], [0])
-    dataset.load('./train', True)
-    produce_thread = threading.Thread(target=dataset.load, args=('./train',True))
+    produce_thread = threading.Thread(target=dataset.load, args=(True,))
     produce_thread.start()
     i = 0
     total = 0

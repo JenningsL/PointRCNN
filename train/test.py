@@ -14,7 +14,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
-from kitti import Dataset
+from rpn_dataset import Dataset
 from train_util import compute_proposal_recall, compute_box3d_iou
 from model_util import NUM_FG_POINT
 from box_encoder import BoxEncoder
@@ -40,12 +40,12 @@ def log_string(out_str):
 
 
 def test(split):
-    dataset = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', split)
+    is_training = False
+    dataset = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', split, is_training=is_training)
     # data loading threads
-    produce_thread = Thread(target=dataset.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val',False))
+    produce_thread = Thread(target=dataset.load, args=(False,))
     produce_thread.start()
 
-    is_training = False
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
             is_training_pl = tf.placeholder(tf.bool, shape=())

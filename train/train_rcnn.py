@@ -85,15 +85,15 @@ def get_bn_decay(batch):
     bn_decay = tf.minimum(BN_DECAY_CLIP, 1 - bn_momentum)
     return bn_decay
 
-TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train')
-TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
+TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True)
+TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=True)
 
 def train():
     ''' Main function for training and simple evaluation. '''
     # data loading threads
-    train_produce_thread = Thread(target=TRAIN_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/train', True))
+    train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
     train_produce_thread.start()
-    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val', False))
+    test_produce_thread = Thread(target=TEST_DATASET.load, args=(False,))
     test_produce_thread.start()
 
     with tf.Graph().as_default():

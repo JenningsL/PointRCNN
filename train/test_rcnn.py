@@ -38,7 +38,7 @@ GPU_INDEX = FLAGS.gpu
 def log_string(out_str):
     print(out_str)
 
-TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val')
+TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=False)
 type_list = ['NonObject', 'Car', 'Pedestrian', 'Cyclist']
 
 calib_cache = {}
@@ -64,7 +64,7 @@ def test():
     ''' Main function for training and simple evaluation. '''
     result_dir = FLAGS.output
     # data loading threads
-    test_produce_thread = Thread(target=TEST_DATASET.load, args=('/data/ssd/public/jlliu/PointRCNN/dataset/val', False))
+    test_produce_thread = Thread(target=TEST_DATASET.load, args=(False,))
     test_produce_thread.start()
 
     is_training = False

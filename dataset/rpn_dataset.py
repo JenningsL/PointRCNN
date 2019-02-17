@@ -29,13 +29,20 @@ HEADING_SEARCH_RANGE = np.pi
 box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
 
 class Dataset(object):
-    def __init__(self, npoints, kitti_path, split, \
+    def __init__(self, npoints, kitti_path, split, is_training, \
         types=type_whitelist, difficulties=difficulties_whitelist):
         self.npoints = npoints
         self.kitti_path = kitti_path
         #self.batch_size = batch_size
         self.split = split
-        self.kitti_dataset = kitti_object(kitti_path, 'training')
+        self.is_training = is_training
+        if split in ['train', 'val']:
+            self.kitti_dataset = kitti_object(kitti_path, 'training')
+        else:
+            self.kitti_dataset = kitti_object_video(
+                os.path.join(kitti_path, 'image_02/data'),
+                os.path.join(kitti_path, 'velodyne_points/data'),
+                kitti_path)
         self.frame_ids = self.load_split_ids(split)
         random.shuffle(self.frame_ids)
         # self.frame_ids = self.frame_ids[:100]
@@ -54,7 +61,7 @@ class Dataset(object):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
             return [line.rstrip('\n') for line in f]
 
-    def load(self, save_path, aug=False):
+    def load(self, aug=False):
         i = 0
         while not self.stop:
             frame_id = self.frame_ids[i]
@@ -81,6 +88,8 @@ class Dataset(object):
         center_res = np.zeros((self.npoints, 3))
         angle_res = np.zeros((self.npoints,))
         size_res = np.zeros((self.npoints, 3))
+        if not self.is_training:
+            return objectness, center_cls, center_res, angle_cls, angle_res, size_cls, size_res
         for i, prop in proposal_dict.items():
             objectness[i] = 1
             center_cls[i] = prop[0]
@@ -94,6 +103,8 @@ class Dataset(object):
     def get_gt_box_of_points(self, box_dict):
         '''assign a ground truth box(corners) to each point'''
         boxes = np.zeros((self.npoints,8,3), dtype=np.float32)
+        if not self.is_training:
+            return boxes
         for i, box in box_dict.items():
             boxes[i] = box_dict[i]
         return boxes
@@ -167,7 +178,10 @@ class Dataset(object):
         data_idx = int(data_idx_str)
         # print(data_idx_str)
         calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
-        objects = self.kitti_dataset.get_label_objects(data_idx)
+        if self.is_training:
+            objects = self.kitti_dataset.get_label_objects(data_idx)
+        else:
+            objects = []
         image = self.kitti_dataset.get_image(data_idx)
         pc_velo = self.kitti_dataset.get_lidar(data_idx)
         img_height, img_width = image.shape[0:2]
@@ -253,8 +267,8 @@ if __name__ == '__main__':
 
     # dataset = Dataset(16384, kitti_path, split, types=['Car'], difficulties=[1])
     dataset = Dataset(16384, kitti_path, split)
-    # dataset.load('./train', True)
-    produce_thread = threading.Thread(target=dataset.load, args=('./train',False))
+    # dataset.load(True)
+    produce_thread = threading.Thread(target=dataset.load, args=(False,))
     produce_thread.start()
     i = 0
     total = 0
