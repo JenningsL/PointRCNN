@@ -23,7 +23,7 @@ except NameError:
 
 class kitti_object(object):
     '''Load and parse object data into a usable format.'''
-    
+
     def __init__(self, root_dir, split='training'):
         '''root_dir contains training and testing folders'''
         self.root_dir = root_dir
@@ -47,25 +47,25 @@ class kitti_object(object):
         return self.num_samples
 
     def get_image(self, idx):
-        assert(idx<self.num_samples) 
+        assert(idx<self.num_samples)
         img_filename = os.path.join(self.image_dir, '%06d.png'%(idx))
         return utils.load_image(img_filename)
 
-    def get_lidar(self, idx): 
-        assert(idx<self.num_samples) 
+    def get_lidar(self, idx):
+        assert(idx<self.num_samples)
         lidar_filename = os.path.join(self.lidar_dir, '%06d.bin'%(idx))
         return utils.load_velo_scan(lidar_filename)
 
     def get_calibration(self, idx):
-        assert(idx<self.num_samples) 
+        assert(idx<self.num_samples)
         calib_filename = os.path.join(self.calib_dir, '%06d.txt'%(idx))
         return utils.Calibration(calib_filename)
 
     def get_label_objects(self, idx):
-        assert(idx<self.num_samples and self.split=='training') 
+        assert(idx<self.num_samples and self.split=='training')
         label_filename = os.path.join(self.label_dir, '%06d.txt'%(idx))
         return utils.read_label(label_filename)
-        
+
     def get_depth_map(self, idx):
         pass
 
@@ -76,7 +76,7 @@ class kitti_object_video(object):
     ''' Load data for KITTI videos '''
     def __init__(self, img_dir, lidar_dir, calib_dir):
         self.calib = utils.Calibration(calib_dir, from_video=True)
-        self.img_dir = img_dir
+        self.image_dir = img_dir
         self.lidar_dir = lidar_dir
         self.img_filenames = sorted([os.path.join(img_dir, filename) \
             for filename in os.listdir(img_dir)])
@@ -91,12 +91,12 @@ class kitti_object_video(object):
         return self.num_samples
 
     def get_image(self, idx):
-        assert(idx<self.num_samples) 
+        assert(idx<self.num_samples)
         img_filename = self.img_filenames[idx]
         return utils.load_image(img_filename)
 
-    def get_lidar(self, idx): 
-        assert(idx<self.num_samples) 
+    def get_lidar(self, idx):
+        assert(idx<self.num_samples)
         lidar_filename = self.lidar_filenames[idx]
         return utils.load_velo_scan(lidar_filename)
 
@@ -149,7 +149,7 @@ def get_lidar_in_image_fov(pc_velo, calib, xmin, ymin, xmax, ymax,
         return imgfov_pc_velo
 
 def show_lidar_with_boxes(pc_velo, objects, calib,
-                          img_fov=False, img_width=None, img_height=None): 
+                          img_fov=False, img_width=None, img_height=None):
     ''' Show all LiDAR points.
         Draw 3d box in LiDAR point cloud (in velo coord system) '''
     if 'mlab' not in sys.modules: import mayavi.mlab as mlab
@@ -167,7 +167,7 @@ def show_lidar_with_boxes(pc_velo, objects, calib,
     for obj in objects:
         if obj.type=='DontCare':continue
         # Draw 3d bounding box
-        box3d_pts_2d, box3d_pts_3d = utils.compute_box_3d(obj, calib.P) 
+        box3d_pts_2d, box3d_pts_3d = utils.compute_box_3d(obj, calib.P)
         box3d_pts_3d_velo = calib.project_rect_to_velo(box3d_pts_3d)
         # Draw heading arrow
         ori3d_pts_2d, ori3d_pts_3d = utils.compute_orientation_3d(obj, calib.P)
@@ -196,7 +196,7 @@ def show_lidar_on_image(pc_velo, img, calib, img_width, img_height):
         cv2.circle(img, (int(np.round(imgfov_pts_2d[i,0])),
             int(np.round(imgfov_pts_2d[i,1]))),
             2, color=tuple(color), thickness=-1)
-    Image.fromarray(img).show() 
+    Image.fromarray(img).show()
     return img
 
 def dataset_viz():
@@ -207,7 +207,7 @@ def dataset_viz():
         objects = dataset.get_label_objects(data_idx)
         objects[0].print_object()
         img = dataset.get_image(data_idx)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) 
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img_height, img_width, img_channel = img.shape
         print(('Image shape: ', img.shape))
         pc_velo = dataset.get_lidar(data_idx)[:,0:3]
