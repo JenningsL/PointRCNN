@@ -104,7 +104,8 @@ class Dataset(object):
             'size_cls': np.zeros((bsize,), dtype=np.int32),
             'angle_res': np.zeros((bsize,), dtype=np.float32),
             'size_res': np.zeros((bsize, 3), dtype=np.float32),
-            'gt_box_of_prop': np.zeros((bsize, 8, 3), dtype=np.float32)
+            'gt_box_of_prop': np.zeros((bsize, 8, 3), dtype=np.float32),
+            'train_regression': np.zeros((bsize,), dtype=bool)
         }
         for i in range(bsize):
             sample = self.data_buffer.get()
@@ -128,6 +129,7 @@ class Dataset(object):
             batch['angle_res'][i] = sample['angle_res']
             batch['size_res'][i,...] = sample['size_res']
             batch['gt_box_of_prop'][i,...] = sample['gt_box']
+            batch['train_regression'][i] = sample['train_regression']
 
         return batch, is_last_batch
 
@@ -288,18 +290,15 @@ class Dataset(object):
         for prop in proposals:
             b2d,prop_box_3d = utils.compute_box_3d(prop, calib.P)
             prop_box_xy = prop_box_3d[:4, [0,2]]
-            gt_idx, gt_iou = find_match_label(prop_box_xy, gt_boxes_xy)
-            if gt_iou < 0.55:
-                sample = self.get_sample(pc_rect, image, calib, prop)
-                if sample:
-                    negative_samples.append(sample)
-                    # show_boxes.append(prop_box_3d)
+            max_idx, max_iou = find_match_label(prop_box_xy, gt_boxes_xy)
+            sample = self.get_sample(pc_rect, image, calib, prop, max_iou, max_idx, objects)
+            if not sample:
+                continue
+            if sample['class'] == 0:
+                negative_samples.append(sample)
             else:
-                sample = self.get_sample(pc_rect, image, calib, prop, objects[gt_idx])
-                if sample:
-                    positive_samples.append(sample)
-                    # boxes_2d.append(b2d)
-                    show_boxes.append(prop_box_3d)
+                positive_samples.append(sample)
+                show_boxes.append(prop_box_3d)
         #print('positive:', len(positive_samples))
         #print('negative:', len(negative_samples))
         random.shuffle(negative_samples)
@@ -308,7 +307,11 @@ class Dataset(object):
         # self.viz_frame(pc_rect, np.zeros((pc_rect.shape[0],)), show_boxes)
         return samples
 
-    def get_sample(self, pc_rect, image, calib, proposal_, label=None):
+    def get_sample(self, pc_rect, image, calib, proposal_, max_iou, max_idx, objects):
+        if max_iou >= 0.45:
+            label = objects[max_idx]
+        else:
+            label = None
         # expand proposal boxes
         proposal_expand = copy.deepcopy(proposal_)
         proposal_expand.l += 1
@@ -344,6 +347,7 @@ class Dataset(object):
         sample['size_cls'] = 0
         sample['size_res'] = np.zeros((3,))
         sample['gt_box'] = np.zeros((8,3))
+        sample['train_regression'] = max_iou > 0.55
         if label:
             sample['class'] = g_type2onehotclass[label.type]
             # rotation canonical transformation

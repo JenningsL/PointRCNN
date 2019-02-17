@@ -53,6 +53,7 @@ class RCNN(object):
             'gt_box_of_prop': tf.placeholder(tf.float32, shape=(batch_size, 8, 3)),
             'img_inputs': tf.placeholder(tf.float32, shape=(batch_size, 360, 1200, 3)),
             'calib': tf.placeholder(tf.float32, shape=(batch_size, 3, 4)),
+            'train_regression': tf.placeholder(tf.bool, shape=(batch_size,)),
             'is_training_pl': tf.placeholder(tf.bool, shape=())
         }
 
@@ -229,10 +230,11 @@ class RCNN(object):
         cls_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(\
             logits=end_points['cls_logits'], labels=self.placeholders['class_labels']))
         tf.summary.scalar('classification loss', cls_loss)
-        is_obj_mask = tf.to_float(tf.not_equal(self.placeholders['class_labels'], 0))
-        center_x_cls_loss = tf.reduce_mean(is_obj_mask*tf.nn.sparse_softmax_cross_entropy_with_logits(\
+        # is_obj_mask = tf.to_float(tf.not_equal(self.placeholders['class_labels'], 0))
+        train_reg_mask = self.placeholders['train_regression']
+        center_x_cls_loss = tf.reduce_mean(train_reg_mask*tf.nn.sparse_softmax_cross_entropy_with_logits(\
            logits=end_points['center_x_scores'], labels=self.placeholders['center_bin_x_labels']))
-        center_z_cls_loss = tf.reduce_mean(is_obj_mask*tf.nn.sparse_softmax_cross_entropy_with_logits(\
+        center_z_cls_loss = tf.reduce_mean(train_reg_mask*tf.nn.sparse_softmax_cross_entropy_with_logits(\
            logits=end_points['center_z_scores'], labels=self.placeholders['center_bin_z_labels']))
         bin_x_onehot = tf.one_hot(self.placeholders['center_bin_x_labels'],
             depth=NUM_CENTER_BIN,
@@ -240,16 +242,16 @@ class RCNN(object):
         # NOTICE: labels['center_x_residuals'] is already normalized
         center_x_residuals_normalized = tf.reduce_sum(end_points['center_x_residuals_normalized']*tf.to_float(bin_x_onehot), axis=-1) # B
         center_x_residuals_dist = tf.norm(self.placeholders['center_x_res_labels'] - center_x_residuals_normalized, axis=-1)
-        center_x_res_loss = huber_loss(is_obj_mask*center_x_residuals_dist, delta=1.0)
+        center_x_res_loss = huber_loss(train_reg_mask*center_x_residuals_dist, delta=1.0)
         bin_z_onehot = tf.one_hot(self.placeholders['center_bin_z_labels'],
             depth=NUM_CENTER_BIN,
             on_value=1, off_value=0, axis=-1) # BxNUM_CENTER_BIN
         center_z_residuals_normalized = tf.reduce_sum(end_points['center_z_residuals_normalized']*tf.to_float(bin_z_onehot), axis=-1) # B
         center_z_residuals_dist = tf.norm(self.placeholders['center_z_res_labels'] - center_z_residuals_normalized, axis=-1)
-        center_z_res_loss = huber_loss(is_obj_mask*center_z_residuals_dist, delta=1.0)
+        center_z_res_loss = huber_loss(train_reg_mask*center_z_residuals_dist, delta=1.0)
         # y is directly regressed
         center_y_residuals_dist = tf.norm(self.placeholders['center_y_res_labels'] - tf.gather(end_points['center_y_residuals'], 0, axis=-1), axis=-1)
-        center_y_res_loss = huber_loss(is_obj_mask*center_y_residuals_dist, delta=1.0)
+        center_y_res_loss = huber_loss(train_reg_mask*center_y_residuals_dist, delta=1.0)
         tf.summary.scalar('center_x  class loss', center_x_cls_loss)
         tf.summary.scalar('center_z  class loss', center_z_cls_loss)
         tf.summary.scalar('center_x residual loss', center_x_res_loss)
@@ -257,7 +259,7 @@ class RCNN(object):
         tf.summary.scalar('center_z residual loss', center_z_res_loss)
         # Heading loss
         heading_class_loss = tf.reduce_mean( \
-            is_obj_mask*tf.nn.sparse_softmax_cross_entropy_with_logits( \
+            train_reg_mask*tf.nn.sparse_softmax_cross_entropy_with_logits( \
             logits=end_points['heading_scores'], labels=self.placeholders['heading_bin_labels']))
         hcls_onehot = tf.one_hot(self.placeholders['heading_bin_labels'],
             depth=NUM_HEADING_BIN,
@@ -266,12 +268,12 @@ class RCNN(object):
         heading_res_dist = tf.norm(tf.reduce_sum( \
             end_points['heading_residuals_normalized']*tf.to_float(hcls_onehot), axis=-1) - \
             heading_residual_normalized_label)
-        heading_res_loss = huber_loss(is_obj_mask*heading_res_dist, delta=1.0)
+        heading_res_loss = huber_loss(train_reg_mask*heading_res_dist, delta=1.0)
         tf.summary.scalar('heading class loss', heading_class_loss)
         tf.summary.scalar('heading residual loss', heading_res_loss)
         # Size loss
         size_class_loss = tf.reduce_mean( \
-            is_obj_mask*tf.nn.sparse_softmax_cross_entropy_with_logits( \
+            train_reg_mask*tf.nn.sparse_softmax_cross_entropy_with_logits( \
             logits=end_points['size_scores'], labels=self.placeholders['size_class_labels']))
 
         scls_onehot = tf.one_hot(self.placeholders['size_class_labels'],
@@ -285,7 +287,7 @@ class RCNN(object):
         size_residual_label_normalized = self.placeholders['size_res_labels'] # Bx3
 
         size_dist = tf.norm(size_residual_label_normalized - predicted_size_residual_normalized, axis=-1)
-        size_res_loss = huber_loss(is_obj_mask*size_dist, delta=1.0)
+        size_res_loss = huber_loss(train_reg_mask*size_dist, delta=1.0)
         tf.summary.scalar('size class loss', size_class_loss)
         tf.summary.scalar('size residual loss', size_res_loss)
 

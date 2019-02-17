@@ -204,7 +204,7 @@ def train_one_epoch(sess, ops, pls, train_writer):
     # Training with batches
     batch_idx = 0
     while(True):
-        batch_data, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
+        batch_data, is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {
             pls['pointclouds']: batch_data['pointcloud'],
@@ -222,6 +222,7 @@ def train_one_epoch(sess, ops, pls, train_writer):
             pls['size_class_labels']: batch_data['size_cls'],
             pls['size_res_labels']: batch_data['size_res'],
             pls['gt_box_of_prop']: batch_data['gt_box_of_prop'],
+            pls['train_regression']: batch_data['train_regression'],
             pls['is_training_pl']: is_training
         }
 
@@ -304,7 +305,7 @@ def eval_one_epoch(sess, ops, pls, test_writer):
     # Training with batches
     batch_idx = 0
     while(True):
-        batch_data, is_last_batch = TRAIN_DATASET.get_next_batch(BATCH_SIZE)
+        batch_data, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
 
         feed_dict = {
             pls['pointclouds']: batch_data['pointcloud'],
@@ -322,6 +323,7 @@ def eval_one_epoch(sess, ops, pls, test_writer):
             pls['size_class_labels']: batch_data['size_cls'],
             pls['size_res_labels']: batch_data['size_res'],
             pls['gt_box_of_prop']: batch_data['gt_box_of_prop'],
+            pls['train_regression']: batch_data['train_regression'],
             pls['is_training_pl']: is_training
         }
 
