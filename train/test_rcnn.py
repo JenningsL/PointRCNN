@@ -90,6 +90,7 @@ def test():
         saver.restore(sess, FLAGS.restore_model_path)
 
     objects = {}
+    boxes = []
     while(True):
         batch_data, is_last_batch = TEST_DATASET.get_next_batch(BATCH_SIZE)
         feed_dict = {
