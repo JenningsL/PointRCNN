@@ -26,7 +26,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
 parser.add_argument('--num_point', type=int, default=512, help='Point Number [default: 512]')
 parser.add_argument('--batch_size', type=int, default=16, help='Batch Size during training [default: 16]')
-parser.add_argument('--restore_model_path', default=None, help='Restore model path e.g. log/model.ckpt [default: None]')
+parser.add_argument('--model_path', default=None, help='Restore model path e.g. log/model.ckpt [default: None]')
+parser.add_argument('--kitti_path', default='/data/ssd/public/jlliu/Kitti/object', help='Kitti root path')
+parser.add_argument('--split', default='val', help='Data split to use [default: val]')
+FLAGS = parser.parse_args()
 parser.add_argument('--output', default='test_results', help='output file/folder name [default: test_results]')
 FLAGS = parser.parse_args()
 
@@ -34,11 +37,14 @@ FLAGS = parser.parse_args()
 BATCH_SIZE = FLAGS.batch_size
 NUM_POINT = FLAGS.num_point
 GPU_INDEX = FLAGS.gpu
+KITTI_PATH = FLAGS.kitti_path
+SPLIT = FLAGS.split
 
 def log_string(out_str):
     print(out_str)
 
-TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=False)
+#TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=False)
+TEST_DATASET = Dataset(NUM_POINT, KITTI_PATH, SPLIT, is_training=False)
 type_list = ['NonObject', 'Car', 'Pedestrian', 'Cyclist']
 
 calib_cache = {}
@@ -87,7 +93,7 @@ def test():
         config.log_device_placement = False
         sess = tf.Session(config=config)
 
-        saver.restore(sess, FLAGS.restore_model_path)
+        saver.restore(sess, FLAGS.model_path)
 
     objects = {}
     boxes = []
@@ -161,7 +167,7 @@ def test():
     print('write detection results to ' + output_dir)
     # Make sure for each frame (no matter if we have measurment for that frame),
     # there is a TXT file
-    to_fill_filename_list = [frame_id+'.txt' \
+    to_fill_filename_list = ['%06d.txt'%(int(frame_id)) \
             for frame_id in TEST_DATASET.frame_ids]
     fill_files(output_dir, to_fill_filename_list)
 
@@ -246,7 +252,7 @@ def load():
     print('write detection results to ' + output_dir)
     # Make sure for each frame (no matter if we have measurment for that frame),
     # there is a TXT file
-    to_fill_filename_list = [frame_id+'.txt' \
+    to_fill_filename_list = ['%06d.txt'%(int(frame_id)) \
             for frame_id in TEST_DATASET.frame_ids]
     fill_files(output_dir, to_fill_filename_list)
 

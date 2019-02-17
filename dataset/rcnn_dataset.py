@@ -41,12 +41,13 @@ class Dataset(object):
         self.is_training = is_training
         if split in ['train', 'val']:
             self.kitti_dataset = kitti_object(kitti_path, 'training')
+            self.frame_ids = self.load_split_ids(split)
         else:
             self.kitti_dataset = kitti_object_video(
                 os.path.join(kitti_path, 'image_02/data'),
                 os.path.join(kitti_path, 'velodyne_points/data'),
                 kitti_path)
-        self.frame_ids = self.load_split_ids(split)
+            self.frame_ids = range(self.kitti_dataset.num_samples)
         # random.shuffle(self.frame_ids)
         # self.frame_ids = self.frame_ids[:1]
         self.num_channel = 6 # xyz intensity is_obj_one_hot
@@ -384,18 +385,21 @@ if __name__ == '__main__':
     split = sys.argv[2]
 
     # statistic
+    '''
     dataset = Dataset(512, kitti_path, split)
     dataset.stat_proposal()
     sys.exit()
+    '''
 
-    sys.path.append('../models')
+    sys.path.append('models')
     from collections import namedtuple
     import tensorflow as tf
     from img_vgg_pyramid import ImgVggPyr
     import projection
     VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
 
-    dataset = Dataset(512, kitti_path, split, ['Car'], [0])
+    dataset = Dataset(512, kitti_path, split, False, ['Car'], [0])
+    dataset.load(False)
     produce_thread = threading.Thread(target=dataset.load, args=(True,))
     produce_thread.start()
     i = 0

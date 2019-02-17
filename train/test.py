@@ -25,6 +25,7 @@ parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU
 parser.add_argument('--num_point', type=int, default=16384, help='Point Number [default: 16384]')
 parser.add_argument('--batch_size', type=int, default=32, help='Batch Size during training [default: 32]')
 parser.add_argument('--model_path', default=None, help='Restore model path e.g. log/model.ckpt [default: None]')
+parser.add_argument('--kitti_path', default='/data/ssd/public/jlliu/Kitti/object', help='Kitti root path')
 parser.add_argument('--split', default='val', help='Data split to use [default: val]')
 FLAGS = parser.parse_args()
 
@@ -33,6 +34,7 @@ EPOCH_CNT = 0
 BATCH_SIZE = FLAGS.batch_size
 NUM_POINT = FLAGS.num_point
 GPU_INDEX = FLAGS.gpu
+KITTI_PATH = FLAGS.kitti_path
 SPLIT = FLAGS.split
 
 def log_string(out_str):
@@ -41,7 +43,8 @@ def log_string(out_str):
 
 def test(split):
     is_training = False
-    dataset = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', split, is_training=is_training)
+    #dataset = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', split, is_training=is_training)
+    dataset = Dataset(NUM_POINT, KITTI_PATH, split, is_training=is_training)
     # data loading threads
     produce_thread = Thread(target=dataset.load, args=(False,))
     produce_thread.start()
