@@ -3,7 +3,9 @@ import os
 import re
 import numpy as np
 import matplotlib
-# matplotlib.use('Agg')
+matplotlib.use('Agg')
+# import mayavi.mlab as mlab
+# from mayavi_utils import draw_lidar, draw_gt_boxes3d
 import matplotlib.pyplot as plt
 import argparse
 import matplotlib.patheffects as patheffects
@@ -15,8 +17,6 @@ sys.path.append(os.path.join(BASE_DIR, 'mayavi'))
 sys.path.append(os.path.join(ROOT_DIR, 'kitti'))
 import kitti_util as utils
 from kitti_object import *
-import mayavi.mlab as mlab
-from mayavi_utils import draw_lidar, draw_gt_boxes3d
 
 import vis_utils
 
