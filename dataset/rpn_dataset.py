@@ -21,6 +21,7 @@ import kitti_util as utils
 from data_util import rotate_points_along_y, shift_point_cloud, extract_pc_in_box3d
 from data_conf import type_whitelist, difficulties_whitelist
 
+g_type2onehotclass = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
 NUM_HEADING_BIN = 12
 NUM_CENTER_BIN = 12
 CENTER_SEARCH_RANGE = 3.0
@@ -229,7 +230,8 @@ class Dataset(object):
                 # label without 3d points
                 # print('skip object without points')
                 continue
-            seg_mask[obj_mask] = 1
+            seg_mask[obj_mask] = g_type2onehotclass[obj.type]
+            #seg_mask[obj_mask] = 1
             gt_boxes.append(obj_box_3d)
             obj_idxs = np.where(obj_mask)[0]
             # data augmentation

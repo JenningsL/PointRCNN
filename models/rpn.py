@@ -24,6 +24,7 @@ NUM_CENTER_BIN = 12
 CENTER_SEARCH_RANGE = 3.0
 HEADING_SEARCH_RANGE = np.pi
 NUM_CHANNEL = 4
+NUM_SEG_CLASSES = 4
 
 class RPN(object):
     """docstring for RPN."""
@@ -57,6 +58,7 @@ class RPN(object):
             'size_residuals_labels': tf.placeholder(tf.float32, shape=(batch_size, num_point, 3)),
             'gt_boxes': tf.placeholder(tf.float32, shape=(batch_size, None, 8, 3)),
             'gt_box_of_point': tf.placeholder(tf.float32, shape=(batch_size, num_point, 8, 3)),
+            'img_seg_softmax': tf.placeholder(tf.float32, shape=(batch_size, num_point, NUM_SEG_CLASSES)),
             'is_training_pl': tf.placeholder(tf.bool, shape=())
         }
 
@@ -196,7 +198,7 @@ class RPN(object):
             is_training=is_training, scope='conv1d-fc1', bn_decay=bn_decay)
         net = tf_util.dropout(net, keep_prob=0.7,
             is_training=is_training, scope='dp1')
-        logits = tf_util.conv1d(net, 2, 1,
+        logits = tf_util.conv1d(net, NUM_SEG_CLASSES, 1,
             padding='VALID', activation_fn=None, scope='conv1d-fc2')
         end_points['foreground_logits'] = logits
 
@@ -298,10 +300,12 @@ class RPN(object):
         '''
         with tf.device('/gpu:0'):
             end_points = self.get_segmentation_net(point_cloud, is_training, bn_decay, end_points)
-            foreground_logits = tf.cond(is_training, lambda: tf.one_hot(mask_label, 2), lambda: end_points['foreground_logits'])
+            seg_softmax = tf.nn.softmax(end_points['foreground_logits'], axis=-1) + self.placeholders['img_seg_softmax'] / 2
+            seg_logits = tf.cond(is_training, lambda: tf.one_hot(mask_label, NUM_SEG_CLASSES), lambda: seg_softmax)
+            end_points['point_feats_fuse'] = tf.concat([end_points['point_feats_fuse'], seg_logits], axis=-1)
             # fg_point_feats include xyz
             fg_point_feats, end_points = point_cloud_masking(
-                end_points['point_feats_fuse'], foreground_logits,
+                end_points['point_feats_fuse'], seg_logits,
                 end_points, xyz_only=False) # BxNUM_FG_POINTxD
             proposals = self.get_region_proposal_net(fg_point_feats, is_training, bn_decay, end_points)
             proposals_reshaped = tf.reshape(proposals, [self.batch_size, NUM_FG_POINT, -1])
@@ -318,7 +322,7 @@ class RPN(object):
         end_points = self.end_points
         batch_size = self.batch_size
         # 3D Segmentation loss
-        mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(pls['seg_labels'], 2, axis=-1))
+        mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(pls['seg_labels'], NUM_SEG_CLASSES, axis=-1))
         tf.summary.scalar('mask loss', mask_loss)
         #return mask_loss, {}
         # gather box estimation labels of foreground points

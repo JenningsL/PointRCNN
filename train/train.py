@@ -17,7 +17,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 from rpn_dataset import Dataset
 from model_util import NUM_FG_POINT
-from rpn import RPN
+from rpn import RPN, NUM_SEG_CLASSES
 import train_util
 
 parser = argparse.ArgumentParser()
@@ -173,7 +173,7 @@ def train():
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
             # eval iou and recall is slow
-            #eval_iou_recall = (epoch > 10 and epoch % 2 == 0)
+            #eval_iou_recall = (epoch > 5 and epoch % 2 == 0)
             eval_iou_recall = epoch % 2 == 0
             train_one_epoch(sess, ops, placeholders, train_writer, eval_iou_recall)
             #if epoch % 3 == 0:
@@ -226,6 +226,7 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
             pls['size_class_labels']: batch_data['size_cls'],
             pls['size_residuals_labels']: batch_data['size_res'],
             pls['gt_box_of_point']: batch_data['gt_box_of_point'],
+            pls['img_seg_softmax']: np.zeros((BATCH_SIZE, NUM_POINT, NUM_SEG_CLASSES)),
             pls['is_training_pl']: is_training,
         }
         if more:
@@ -251,9 +252,9 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
         correct = np.sum(preds_val == batch_data['seg_label'])
-        tp = np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] == 1))
+        tp = np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] != 0))
         fp = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 0))
-        fn = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 1))
+        fn = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != 0))
         total_correct += correct
         total_tp += tp
         total_fp += fp
@@ -303,6 +304,7 @@ def eval_one_epoch(sess, ops, pls, test_writer, more=False):
 
     global EPOCH_CNT
     is_training = False
+    #is_training = True
     log_string(str(datetime.now()))
     log_string('---- EPOCH %03d EVALUATION ----'%(EPOCH_CNT))
 
@@ -337,6 +339,7 @@ def eval_one_epoch(sess, ops, pls, test_writer, more=False):
             pls['size_class_labels']: batch_data['size_cls'],
             pls['size_residuals_labels']: batch_data['size_res'],
             pls['gt_box_of_point']: batch_data['gt_box_of_point'],
+            pls['img_seg_softmax']: np.zeros((BATCH_SIZE, NUM_POINT, NUM_SEG_CLASSES)),
             pls['is_training_pl']: is_training,
         }
 
@@ -363,9 +366,9 @@ def eval_one_epoch(sess, ops, pls, test_writer, more=False):
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
         correct = np.sum(preds_val == batch_data['seg_label'])
-        tp = np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] == 1))
+        tp = np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] != 0))
         fp = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 0))
-        fn = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 1))
+        fn = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != 0))
         total_tp += tp
         total_fp += fp
         total_fn += fn
