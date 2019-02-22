@@ -232,6 +232,7 @@ class Dataset(object):
             calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
             objects = self.kitti_dataset.get_label_objects(data_idx)
             proposals = self.get_proposals(data_idx)
+            objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
             gt_boxes = [] # ground truth boxes
             gt_boxes_xy = []
             for obj in objects:
@@ -344,7 +345,6 @@ class Dataset(object):
         proposal_expand = copy.deepcopy(proposal_)
         proposal_expand.l += 1
         proposal_expand.w += 1
-        proposal_expand.h += 1
         _, box_3d = utils.compute_box_3d(proposal_expand, calib.P)
         _, mask = extract_pc_in_box3d(pc_rect, box_3d)
         if(np.sum(mask) == 0):

@@ -14,9 +14,14 @@ sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 from rpn_dataset import Dataset
-from rpn import NUM_SEG_CLASSES
 import tf_util
 import projection
+
+NUM_HEADING_BIN = 12
+NUM_CENTER_BIN = 12
+CENTER_SEARCH_RANGE = 3.0
+HEADING_SEARCH_RANGE = np.pi
+NUM_CHANNEL = 4
 
 class ImgSegNet(object):
     """docstring for RPN."""
@@ -31,40 +36,25 @@ class ImgSegNet(object):
         num_point = self.num_point
         return {
             'pointclouds': tf.placeholder(tf.float32, shape=(batch_size, num_point, self.num_channel)),
-            'img_inputs': tf.placeholder(tf.float32, shape=(batch_size, 360, 1200, 3)),
+            'img_inputs': self.graph.get_tensor_by_name('deeplab_v3/ImageTensor:0'),
             'calib': tf.placeholder(tf.float32, shape=(batch_size, 3, 4)),
             'seg_labels': tf.placeholder(tf.int32, shape=(batch_size, num_point))
         }
 
-    def load_graph():
+    def load_graph(self, frozen_graph_filename):
+        with tf.gfile.GFile(frozen_graph_filename, "rb") as f:
+            graph_def = tf.GraphDef()
+            graph_def.ParseFromString(f.read())
+        tf.import_graph_def(graph_def, name="deeplab_v3")
+        self.graph = tf.get_default_graph()
         self.placeholders = self.get_placeholders()
-        self._img_pixel_size = np.asarray([360, 1200])
-        VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
-        self._img_feature_extractor = ImgVggPyr(VGG_config(**{
-            'vgg_conv1': [2, 32],
-            'vgg_conv2': [2, 64],
-            'vgg_conv3': [3, 128],
-            'vgg_conv4': [3, 256],
-            'l2_weight_decay': 0.0005
-        }))
-        self._img_preprocessed = \
-            self._img_feature_extractor.preprocess_input(
-                self.placeholders['img_inputs'], self._img_pixel_size)
-        self.img_feature_maps, self.img_end_points = \
-            self._img_feature_extractor.build(
-                self._img_preprocessed,
-                self._img_pixel_size,
-                self.is_training)
-        #return self.img_feature_maps
-        self.seg_logits = slim.conv2d(
-            self.img_feature_maps,
-            4, [1, 1],
-            scope='bottleneck',
-            normalizer_fn=slim.batch_norm,
-            #normalizer_fn=None,
-            normalizer_params={
-                'is_training': self.is_training})
 
+    def get_seg_softmax(self):
+        point_cloud = self.placeholders['pointclouds']
+        mask_label = self.placeholders['seg_labels']
+        end_points = self.end_points
+
+        img_seg = self.graph.get_tensor_by_name('deeplab_v3/SemanticPredictions:0') # (B,360,1200,1)
         pts2d = projection.tf_rect_to_image(tf.slice(point_cloud,[0,0,0],[-1,-1,3]), self.placeholders['calib'])
         pts2d = tf.cast(pts2d, tf.int32) #(B,N,2)
         indices = tf.concat([
@@ -72,24 +62,37 @@ class ImgSegNet(object):
             tf.reshape(pts2d, [self.batch_size*self.num_point, 2])
         ], axis=-1) # (B*N,3)
         indices = tf.gather(indices, [0,2,1], axis=-1) # image's shape is (y,x)
-        self.end_points['foreground_logits'] = tf.reshape(
-            tf.gather_nd(self.seg_logits, indices), # (B*N,C)
-            [self.batch_size, self.num_point, -1])  # (B,N,C)
-
-    def get_seg_softmax(self):
-        img_seg_softmax = tf.nn.softmax(self.end_points['point_seg_logits'], axis=-1)
+        point_class = tf.reshape(
+            tf.gather_nd(img_seg, indices), # (B*N,1)
+            [self.batch_size, self.num_point, -1])  # (B,N,1)
+        # person 11, rider 12, car 13
+        point_class = tf.to_int32(tf.squeeze(point_class, axis=-1)) # (B,N)
+        point_class = tf.to_int32(tf.equal(point_class, 13)) + tf.to_int32(tf.equal(point_class, 11)) * 2 + tf.to_int32(tf.equal(point_class, 12)) * 3
+        img_seg_softmax = tf.one_hot(point_class, 4, axis=-1)
         return img_seg_softmax
 
-    def get_loss(self):
-        pls = self.placeholders
-        end_points = self.end_points
-        batch_size = self.batch_size
-        # 3D Segmentation loss
-        mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(pls['seg_labels'], NUM_SEG_CLASSES, axis=-1))
-        tf.summary.scalar('mask loss', mask_loss)
-        return mask_loss
-
 if __name__ == '__main__':
+    '''
+    with open('img_seg.pkl', 'rb') as fin:
+        preds = pickle.load(fin)
+        labels = pickle.load(fin)
+        print(np.sum(preds[0]==13))
+        print(np.sum(labels[0]==1))
+
+        tp = 0
+        fp = 0
+        fn = 0
+        for i in range(100):
+            pred = np.squeeze(preds[i], axis=-1)
+            pred = (pred==13) + (pred==11)*2 + (pred==12)*3
+            correct = np.sum(pred == labels[i])
+            tp += np.sum(np.logical_and(pred == labels[i], labels[i] != 0))
+            fp += np.sum(np.logical_and(pred != labels[i], labels[i] == 0))
+            fn += np.sum(np.logical_and(pred != labels[i], labels[i] != 0))
+        print('recall: {0}, precision: {1}'.format(float(tp)/(tp+fn), float(tp)/(tp+fp)))
+    sys.exit()
+    '''
+
     BATCH_SIZE = 1
     NUM_POINT = 16384
     with tf.Graph().as_default() as graph:
@@ -147,3 +150,4 @@ if __name__ == '__main__':
             (float(tp[c])/(tp[c]+fp[c])))
     TEST_DATASET.stop_loading()
     test_produce_thread.join()
+
