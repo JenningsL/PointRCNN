@@ -19,7 +19,7 @@ from kitti_object import *
 import kitti_util as utils
 from box_encoder import BoxEncoder
 from data_util import rotate_points_along_y, shift_point_cloud, extract_pc_in_box3d
-from data_util import ProposalObject, np_read_lines, find_match_label
+from data_util import ProposalObject, np_read_lines, find_match_label, random_shift_box3d
 from data_conf import type_whitelist, difficulties_whitelist
 
 g_type2onehotclass = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
@@ -76,7 +76,7 @@ class Dataset(object):
             for x in range(self.AUG_X):
                 frame_data = {}
                 samples = \
-                    self.load_frame_data(frame_id, random_flip=aug, random_rotate=aug, random_shift=aug)
+                    self.load_frame_data(frame_id, aug)
                 for s in samples:
                     s['frame_id'] = frame_id
                     self.data_buffer.put(s)
@@ -252,8 +252,7 @@ class Dataset(object):
         print('Average IOU 2d {0}'.format(total_iou_2d/total))
         print('Average angle residual {0}'.format(total_angle_res/total))
 
-    def load_frame_data(self, data_idx_str,
-        random_flip=False, random_rotate=False, random_shift=False):
+    def load_frame_data(self, data_idx_str, aug):
         '''load one frame'''
         start = time.time()
         data_idx = int(data_idx_str)
@@ -299,7 +298,7 @@ class Dataset(object):
         negative_samples = []
         show_boxes = []
         # boxes_2d = []
-        for prop in proposals:
+        def process_proposal(prop):
             b2d,prop_box_3d = utils.compute_box_3d(prop, calib.P)
             prop_box_xy = prop_box_3d[:4, [0,2]]
             max_idx, max_iou = find_match_label(prop_box_xy, gt_boxes_xy)
@@ -311,6 +310,18 @@ class Dataset(object):
             else:
                 positive_samples.append(sample)
                 show_boxes.append(prop_box_3d)
+            return sample['class']
+        aug_proposals = []
+        AUG_X = {1:2, 2:5, 3:10}
+        for prop in proposals:
+            cls = process_proposal(prop)
+            if not aug or cls == 0:
+                continue
+            for x in range(AUG_X[cls]):
+                prop_ = random_shift_box3d(copy.deepcopy(prop))
+                aug_proposals.append(prop_)
+        for prop in aug_proposals:
+            process_proposal(prop)
         if self.is_training:
             random.shuffle(negative_samples)
             samples = positive_samples + negative_samples[:len(positive_samples)]
@@ -321,16 +332,19 @@ class Dataset(object):
         return samples
 
     def get_sample(self, pc_rect, image, calib, proposal_, max_iou, max_idx, objects):
-        if max_iou >= 0.45:
+        thres_low = 0.45
+        thres_high = 0.55
+        if max_iou >= thres_high:
             label = objects[max_idx]
-        if max_iou < 0.3:
+        if max_iou < thres_low:
             label = None
-        if self.is_training and max_iou >= 0.3 and max_iou < 0.45:
+        if self.is_training and max_iou >= thres_low and max_iou < thres_high:
             return False
         # expand proposal boxes
         proposal_expand = copy.deepcopy(proposal_)
         proposal_expand.l += 1
         proposal_expand.w += 1
+        proposal_expand.h += 1
         _, box_3d = utils.compute_box_3d(proposal_expand, calib.P)
         _, mask = extract_pc_in_box3d(pc_rect, box_3d)
         if(np.sum(mask) == 0):
@@ -362,7 +376,7 @@ class Dataset(object):
         sample['size_cls'] = 0
         sample['size_res'] = np.zeros((3,))
         sample['gt_box'] = np.zeros((8,3))
-        sample['train_regression'] = max_iou > 0.55
+        sample['train_regression'] = max_iou >= thres_high
         if label:
             sample['class'] = g_type2onehotclass[label.type]
             # rotation canonical transformation

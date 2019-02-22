@@ -78,3 +78,21 @@ def find_match_label(prop_corners, labels_corners):
             largest_iou = iou
             largest_idx = i
     return largest_idx, largest_iou
+
+def random_shift_box3d(obj, shift_ratio=0.1):
+    '''
+    Randomly w, l, h
+    '''
+    r = shift_ratio
+    # 0.9 to 1.1
+    obj.t[0] = obj.t[0] + obj.l*r*(np.random.random()*2-1)
+    obj.t[1] = obj.t[1] + obj.w*r*(np.random.random()*2-1)
+    obj.w = obj.w*(1+np.random.random()*2*r-r)
+    obj.l = obj.l*(1+np.random.random()*2*r-r)
+    obj.ry += (np.pi / 3.6 * (np.random.random()*2*r-r)) # -5~5 degree
+    if obj.ry > np.pi:
+        obj.ry -= 2*np.pi
+    elif obj.ry < -np.pi:
+        obj.ry += 2*np.pi
+    # obj.h = obj.h*(1+np.random.random()*2*r-r)
+    return obj
