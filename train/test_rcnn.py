@@ -29,7 +29,6 @@ parser.add_argument('--batch_size', type=int, default=16, help='Batch Size durin
 parser.add_argument('--model_path', default=None, help='Restore model path e.g. log/model.ckpt [default: None]')
 parser.add_argument('--kitti_path', default='/data/ssd/public/jlliu/Kitti/object', help='Kitti root path')
 parser.add_argument('--split', default='val', help='Data split to use [default: val]')
-FLAGS = parser.parse_args()
 parser.add_argument('--output', default='test_results', help='output file/folder name [default: test_results]')
 FLAGS = parser.parse_args()
 

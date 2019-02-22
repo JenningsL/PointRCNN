@@ -65,8 +65,7 @@ def test(split):
             #box_size = tf.reshape(box_size, [BATCH_SIZE * NUM_FG_POINT,3])
 
             saver = tf.train.Saver()
-
-        with tf.device('/gpu:1'):
+        with tf.device('/gpu:0'):
             seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT)
             seg_net.load_graph('./frozen_inference_graph.pb')
             seg_softmax = seg_net.get_seg_softmax()
@@ -129,7 +128,14 @@ def test(split):
             seg_pls['calib']: batch_data['calib'],
             seg_pls['seg_labels']: batch_data['seg_label']
         })
+        img_seg_logits *= np.array([0, 1, 0, 0]) # weights
         feed_dict[pls['img_seg_softmax']] = img_seg_logits
+        '''
+        # label to one_hot
+        nb_classes = 4
+        targets = batch_data['seg_label']
+        feed_dict[pls['img_seg_softmax']] = np.eye(nb_classes)[targets]
+        '''
 
         logits_val, indices_val, centers_val, angles_val, sizes_val, corners_val, ind_val, scores_val \
         = sess.run([
