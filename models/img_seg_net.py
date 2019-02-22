@@ -17,14 +17,20 @@ from rpn_dataset import Dataset
 from rpn import NUM_SEG_CLASSES
 import tf_util
 import projection
+from model_util import focal_loss
+from img_vgg_pyramid import ImgVggPyr
+from collections import namedtuple
 
 class ImgSegNet(object):
-    """docstring for RPN."""
-    def __init__(self, batch_size, num_point, num_channel=4):
+    """docstring for ImgSegNet."""
+    def __init__(self, batch_size, num_point, num_channel=4, is_training=True):
         self.batch_size = batch_size
         self.num_point = num_point
         self.num_channel = num_channel
+        self.is_training = is_training
         self.end_points = {}
+        self.placeholders = self.get_placeholders()
+        self.build()
 
     def get_placeholders(self):
         batch_size = self.batch_size
@@ -33,11 +39,12 @@ class ImgSegNet(object):
             'pointclouds': tf.placeholder(tf.float32, shape=(batch_size, num_point, self.num_channel)),
             'img_inputs': tf.placeholder(tf.float32, shape=(batch_size, 360, 1200, 3)),
             'calib': tf.placeholder(tf.float32, shape=(batch_size, 3, 4)),
-            'seg_labels': tf.placeholder(tf.int32, shape=(batch_size, num_point))
+            'seg_labels': tf.placeholder(tf.int32, shape=(batch_size, num_point)),
+            'is_training_pl': tf.placeholder(tf.bool, shape=())
         }
 
-    def load_graph():
-        self.placeholders = self.get_placeholders()
+    def build(self):
+        point_cloud = self.placeholders['pointclouds']
         self._img_pixel_size = np.asarray([360, 1200])
         VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
         self._img_feature_extractor = ImgVggPyr(VGG_config(**{
@@ -58,7 +65,7 @@ class ImgSegNet(object):
         #return self.img_feature_maps
         self.seg_logits = slim.conv2d(
             self.img_feature_maps,
-            4, [1, 1],
+            NUM_SEG_CLASSES, [1, 1],
             scope='bottleneck',
             normalizer_fn=slim.batch_norm,
             #normalizer_fn=None,

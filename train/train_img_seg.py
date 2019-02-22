@@ -92,7 +92,7 @@ def train():
     ''' Main function for training and simple evaluation. '''
 
     with tf.Graph().as_default():
-        img_seg_net = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=True)
+        img_seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=True)
         placeholders = img_seg_net.placeholders
         with tf.device('/gpu:0'):
             # is_training_pl = tf.placeholder(tf.bool, shape=())
