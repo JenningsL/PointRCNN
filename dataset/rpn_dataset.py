@@ -38,13 +38,14 @@ class Dataset(object):
         self.is_training = is_training
         if split in ['train', 'val']:
             self.kitti_dataset = kitti_object(kitti_path, 'training')
+            self.frame_ids = self.load_split_ids(split)
+            random.shuffle(self.frame_ids)
         else:
             self.kitti_dataset = kitti_object_video(
                 os.path.join(kitti_path, 'image_02/data'),
                 os.path.join(kitti_path, 'velodyne_points/data'),
                 kitti_path)
-        self.frame_ids = self.load_split_ids(split)
-        random.shuffle(self.frame_ids)
+            self.frame_ids = range(self.kitti_dataset.num_samples)
         # self.frame_ids = self.frame_ids[:100]
         self.num_channel = 4
         self.AUG_X = 1
@@ -266,8 +267,8 @@ if __name__ == '__main__':
     VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
 
     # dataset = Dataset(16384, kitti_path, split, types=['Car'], difficulties=[1])
-    dataset = Dataset(16384, kitti_path, split)
-    # dataset.load(True)
+    dataset = Dataset(16384, kitti_path, split, is_training=False)
+    dataset.load(True)
     produce_thread = threading.Thread(target=dataset.load, args=(False,))
     produce_thread.start()
     i = 0
