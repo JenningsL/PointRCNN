@@ -136,8 +136,9 @@ def point_cloud_masking(point_cloud, logits, end_points, xyz_only=True):
     '''
     batch_size = point_cloud.get_shape()[0].value
     num_point = point_cloud.get_shape()[1].value
-    mask = tf.slice(logits,[0,0,0],[-1,-1,1]) < \
-        tf.slice(logits,[0,0,1],[-1,-1,1])
+    #mask = tf.slice(logits,[0,0,0],[-1,-1,1]) < \
+    #    tf.slice(logits,[0,0,1],[-1,-1,1])
+    mask = tf.not_equal(tf.expand_dims(tf.argmax(logits, axis=-1), axis=-1), 0)
     mask = tf.to_float(mask) # BxNx1
     mask_count = tf.tile(tf.reduce_sum(mask,axis=1,keep_dims=True),
         [1,1,3]) # Bx1x3

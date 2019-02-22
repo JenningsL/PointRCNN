@@ -19,6 +19,7 @@ from train_util import compute_proposal_recall, compute_box3d_iou
 from model_util import NUM_FG_POINT
 from box_encoder import BoxEncoder
 from rpn import RPN
+from img_seg_net import ImgSegNet
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
@@ -50,7 +51,7 @@ def test(split):
     produce_thread.start()
 
     with tf.Graph().as_default():
-        with tf.device('/gpu:'+str(GPU_INDEX)):
+        with tf.device('/gpu:0'):
             is_training_pl = tf.placeholder(tf.bool, shape=())
 
             rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=is_training)
@@ -65,6 +66,10 @@ def test(split):
 
             saver = tf.train.Saver()
 
+        with tf.device('/gpu:1'):
+            seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT)
+            seg_net.load_graph('./frozen_inference_graph.pb')
+            seg_softmax = seg_net.get_seg_softmax()
         # Create a session
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
@@ -96,6 +101,8 @@ def test(split):
     while(True):
         batch_data, is_last_batch = dataset.get_next_batch(BATCH_SIZE, need_id=True)
 
+        start = datetime.now()
+
         feed_dict = {
             pls['pointclouds']: batch_data['pointcloud'],
             pls['img_inputs']: batch_data['images'],
@@ -114,7 +121,15 @@ def test(split):
             pls['is_training_pl']: is_training,
         }
 
-        start = datetime.now()
+        # segmentaion with image
+        seg_pls = seg_net.placeholders
+        img_seg_logits = sess.run(seg_softmax, feed_dict={
+            seg_pls['pointclouds']: batch_data['pointcloud'],
+            seg_pls['img_inputs']: batch_data['images'],
+            seg_pls['calib']: batch_data['calib'],
+            seg_pls['seg_labels']: batch_data['seg_label']
+        })
+        feed_dict[pls['img_seg_softmax']] = img_seg_logits
 
         logits_val, indices_val, centers_val, angles_val, sizes_val, corners_val, ind_val, scores_val \
         = sess.run([
