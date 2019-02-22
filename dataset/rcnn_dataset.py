@@ -303,7 +303,7 @@ class Dataset(object):
             max_idx, max_iou = find_match_label(prop_box_xy, gt_boxes_xy)
             sample = self.get_sample(pc_rect, image, calib, prop, max_iou, max_idx, objects)
             if not sample:
-                continue
+                return -1
             if sample['class'] == 0:
                 negative_samples.append(sample)
             else:
@@ -314,10 +314,10 @@ class Dataset(object):
         AUG_X = {1:2, 2:5, 3:10}
         for prop in proposals:
             cls = process_proposal(prop)
-            if not aug or cls == 0:
+            if not aug or cls <= 0:
                 continue
             for x in range(AUG_X[cls]):
-                prop_ = random_shift_box3d(copy.deepcopy(prop))
+                prop_ = random_shift_box3d(copy.deepcopy(prop), 0.01)
                 aug_proposals.append(prop_)
         for prop in aug_proposals:
             process_proposal(prop)

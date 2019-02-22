@@ -91,7 +91,7 @@ TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', 
 def train():
     ''' Main function for training and simple evaluation. '''
     # data loading threads
-    train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
+    train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(False,))
     train_produce_thread.start()
     test_produce_thread = Thread(target=TEST_DATASET.load, args=(False,))
     test_produce_thread.start()
