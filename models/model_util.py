@@ -13,7 +13,7 @@ from tensorflow.python.ops import array_ops
 # -----------------
 # Global Constants
 # -----------------
-NUM_FG_POINT = 1024
+NUM_FG_POINT = 2048
 
 # -----------------
 # TF Functions Helpers

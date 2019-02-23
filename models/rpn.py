@@ -24,7 +24,7 @@ NUM_CENTER_BIN = 12
 CENTER_SEARCH_RANGE = 3.0
 HEADING_SEARCH_RANGE = np.pi
 NUM_CHANNEL = 4
-NUM_SEG_CLASSES = 4
+NUM_SEG_CLASSES = 2
 
 class RPN(object):
     """docstring for RPN."""
@@ -274,7 +274,7 @@ class RPN(object):
         end_points = self.end_points
 
         end_points = self.get_segmentation_net(point_cloud, is_training, bn_decay, end_points)
-        seg_softmax = tf.nn.softmax(end_points['foreground_logits'], axis=-1) + self.placeholders['img_seg_softmax'] / 2
+        seg_softmax = tf.nn.softmax(end_points['foreground_logits'], axis=-1) + self.placeholders['img_seg_softmax']
         seg_logits = tf.cond(is_training, lambda: tf.one_hot(mask_label, NUM_SEG_CLASSES), lambda: seg_softmax)
         end_points['point_feats_fuse'] = tf.concat([end_points['point_feats_fuse'], seg_logits], axis=-1)
         # fg_point_feats include xyz
