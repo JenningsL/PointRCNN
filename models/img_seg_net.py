@@ -23,10 +23,11 @@ from collections import namedtuple
 
 class ImgSegNet(object):
     """docstring for ImgSegNet."""
-    def __init__(self, batch_size, num_point, num_channel=4, is_training=True):
+    def __init__(self, batch_size, num_point, num_channel=4, bn_decay=None, is_training=True):
         self.batch_size = batch_size
         self.num_point = num_point
         self.num_channel = num_channel
+        self.bn_decay = bn_decay
         self.is_training = is_training
         self.end_points = {}
         self.placeholders = self.get_placeholders()
@@ -46,6 +47,8 @@ class ImgSegNet(object):
     def build(self):
         point_cloud = self.placeholders['pointclouds']
         self._img_pixel_size = np.asarray([360, 1200])
+        bn_decay = self.bn_decay
+        is_training = self.placeholders['is_training_pl']
         VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
         self._img_feature_extractor = ImgVggPyr(VGG_config(**{
             'vgg_conv1': [2, 32],
@@ -62,7 +65,7 @@ class ImgSegNet(object):
                 self._img_preprocessed,
                 self._img_pixel_size,
                 self.is_training)
-        #return self.img_feature_maps
+        '''
         self.seg_logits = slim.conv2d(
             self.img_feature_maps,
             NUM_SEG_CLASSES, [1, 1],
@@ -71,6 +74,7 @@ class ImgSegNet(object):
             #normalizer_fn=None,
             normalizer_params={
                 'is_training': self.is_training})
+        '''
 
         pts2d = projection.tf_rect_to_image(tf.slice(point_cloud,[0,0,0],[-1,-1,3]), self.placeholders['calib'])
         pts2d = tf.cast(pts2d, tf.int32) #(B,N,2)
@@ -79,12 +83,20 @@ class ImgSegNet(object):
             tf.reshape(pts2d, [self.batch_size*self.num_point, 2])
         ], axis=-1) # (B*N,3)
         indices = tf.gather(indices, [0,2,1], axis=-1) # image's shape is (y,x)
-        self.end_points['foreground_logits'] = tf.reshape(
-            tf.gather_nd(self.seg_logits, indices), # (B*N,C)
+        self.end_points['point_img_feats'] = tf.reshape(
+            tf.gather_nd(self.img_feature_maps, indices), # (B*N,C)
             [self.batch_size, self.num_point, -1])  # (B,N,C)
 
+        net = tf_util.conv1d(self.end_points['point_img_feats'], 128, 1, padding='VALID', bn=True,
+            is_training=is_training, scope='img-seg-conv1d-fc1', bn_decay=bn_decay)
+        net = tf_util.dropout(net, keep_prob=0.7,
+            is_training=is_training, scope='img-seg-dp1')
+        logits = tf_util.conv1d(net, NUM_SEG_CLASSES, 1,
+            padding='VALID', activation_fn=None, scope='img-seg-conv1d-fc2')
+        self.end_points['foreground_logits'] = logits
+
     def get_seg_softmax(self):
-        img_seg_softmax = tf.nn.softmax(self.end_points['point_seg_logits'], axis=-1)
+        img_seg_softmax = tf.nn.softmax(self.end_points['foreground_logits'], axis=-1)
         return img_seg_softmax
 
     def get_loss(self):

@@ -14,6 +14,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
+from data_conf import g_type2onehotclass
 from rpn_dataset import Dataset
 from train_util import compute_proposal_recall, compute_box3d_iou
 from model_util import NUM_FG_POINT
@@ -45,15 +46,13 @@ def log_string(out_str):
 def test(split):
     is_training = False
     #dataset = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', split, is_training=is_training)
-    dataset = Dataset(NUM_POINT, KITTI_PATH, split, is_training=is_training)
+    dataset = Dataset(NUM_POINT, KITTI_PATH, split, is_training=True)
     # data loading threads
     produce_thread = Thread(target=dataset.load, args=(False,))
     produce_thread.start()
 
     with tf.Graph().as_default():
         with tf.device('/gpu:0'):
-            is_training_pl = tf.placeholder(tf.bool, shape=())
-
             rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=is_training)
             pls = rpn_model.placeholders
             end_points = rpn_model.end_points
@@ -65,10 +64,6 @@ def test(split):
             #box_size = tf.reshape(box_size, [BATCH_SIZE * NUM_FG_POINT,3])
 
             saver = tf.train.Saver()
-        with tf.device('/gpu:0'):
-            seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT)
-            seg_net.load_graph('./frozen_inference_graph.pb')
-            seg_softmax = seg_net.get_seg_softmax()
         # Create a session
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
@@ -78,12 +73,34 @@ def test(split):
 
         saver.restore(sess, FLAGS.model_path)
 
+    '''
+    with tf.Graph().as_default():
+        with tf.device('/gpu:0'):
+            img_seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT, num_channel=4, bn_decay=None, is_training=is_training)
+            seg_softmax = img_seg_net.get_seg_softmax()
+            #seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT)
+            #seg_net.load_graph('./frozen_inference_graph.pb')
+            #seg_softmax = seg_net.get_seg_softmax()
+            saver1 = tf.train.Saver()
+        # Create another session
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        config.allow_soft_placement = True
+        config.log_device_placement = False
+        sess1 = tf.Session(config=config)
+
+        saver1.restore(sess1, './log_img/bk/model.ckpt.029')
+    '''
+
     log_string(str(datetime.now()))
 
     # To collect statistics
     total_correct = 0
     total_seen = 0
     num_batches = 0
+    tp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+    fp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+    fn = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
 
     frame_ids = []
     fg_indices = []
@@ -121,21 +138,24 @@ def test(split):
         }
 
         # segmentaion with image
-        seg_pls = seg_net.placeholders
-        img_seg_logits = sess.run(seg_softmax, feed_dict={
+        '''
+        seg_pls = img_seg_net.placeholders
+        img_seg_logits = sess1.run(seg_softmax, feed_dict={
             seg_pls['pointclouds']: batch_data['pointcloud'],
             seg_pls['img_inputs']: batch_data['images'],
             seg_pls['calib']: batch_data['calib'],
-            seg_pls['seg_labels']: batch_data['seg_label']
+            seg_pls['seg_labels']: batch_data['seg_label'],
+            seg_pls['is_training_pl']: is_training
         })
-        img_seg_logits *= np.array([0, 1, 0, 0]) # weights
+        img_seg_logits *= np.array([0, 1, 1, 1]) # weights
         feed_dict[pls['img_seg_softmax']] = img_seg_logits
         '''
         # label to one_hot
         nb_classes = 4
         targets = batch_data['seg_label']
-        feed_dict[pls['img_seg_softmax']] = np.eye(nb_classes)[targets]
-        '''
+        img_seg_logits = np.eye(nb_classes)[targets]
+        #img_seg_logits *= np.array([2, 2, 2, 2]) # weights
+        feed_dict[pls['img_seg_softmax']] = img_seg_logits
 
         logits_val, indices_val, centers_val, angles_val, sizes_val, corners_val, ind_val, scores_val \
         = sess.run([
@@ -146,6 +166,11 @@ def test(split):
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
         num_batches += 1
+        for c in ['Car', 'Pedestrian', 'Cyclist']:
+            one_hot_class = g_type2onehotclass[c]
+            tp[c] += np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] == one_hot_class))
+            fp[c] += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != one_hot_class))
+            fn[c] += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == one_hot_class))
         # results
         for i in range(BATCH_SIZE):
             frame_ids.append(batch_data['ids'][i])
@@ -162,17 +187,17 @@ def test(split):
         #if num_batches >= 500:
             break
 
-    with open('rpn_out_{0}.pkl'.format(split),'wb') as fp:
-        pickle.dump(frame_ids, fp)
-        pickle.dump(segmentation, fp)
-        pickle.dump(centers, fp)
-        pickle.dump(angles, fp)
-        pickle.dump(sizes, fp)
-        pickle.dump(proposal_boxes, fp)
-        pickle.dump(nms_indices, fp)
-        pickle.dump(scores, fp)
-        # pickle.dump(gt_boxes, fp)
-        pickle.dump(pc_choices, fp)
+    with open('rpn_out_{0}.pkl'.format(split),'wb') as fout:
+        pickle.dump(frame_ids, fout)
+        pickle.dump(segmentation, fout)
+        pickle.dump(centers, fout)
+        pickle.dump(angles, fout)
+        pickle.dump(sizes, fout)
+        pickle.dump(proposal_boxes, fout)
+        pickle.dump(nms_indices, fout)
+        pickle.dump(scores, fout)
+        # pickle.dump(gt_boxes, fout)
+        pickle.dump(pc_choices, fout)
     log_string('saved prediction')
     dataset.stop_loading()
     produce_thread.join()
@@ -185,6 +210,14 @@ def test(split):
     '''
     recall = compute_proposal_recall(proposal_boxes, gt_boxes, nms_indices)
     print('Average recall: ', recall)
+    print(tp, fp, fn)
+    for c in ['Car', 'Pedestrian', 'Cyclist']:
+        if (tp[c]+fn[c] == 0) or (tp[c]+fp[c]) == 0:
+            continue
+        print(c + ' segmentation recall: %f'% \
+            (float(tp[c])/(tp[c]+fn[c])))
+        print(c + ' segmentation precision: %f'% \
+            (float(tp[c])/(tp[c]+fp[c])))
 
 if __name__ == "__main__":
     log_string('pid: %s'%(str(os.getpid())))

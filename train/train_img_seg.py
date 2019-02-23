@@ -85,15 +85,13 @@ def get_bn_decay(batch):
 TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True)
 # data loading threads
 # FIXME: don't use data augmentation with image feature before calib matrix is adjust accordingly
-train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
+train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(False,))
 train_produce_thread.start()
 
 def train():
     ''' Main function for training and simple evaluation. '''
 
     with tf.Graph().as_default():
-        img_seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=True)
-        placeholders = img_seg_net.placeholders
         with tf.device('/gpu:0'):
             # is_training_pl = tf.placeholder(tf.bool, shape=())
 
@@ -106,6 +104,8 @@ def train():
             tf.summary.scalar('bn_decay', bn_decay)
 
             # Get model and losses
+            img_seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT, num_channel=4, bn_decay=bn_decay, is_training=True)
+            placeholders = img_seg_net.placeholders
             end_points = img_seg_net.end_points
             loss = img_seg_net.get_loss()
 
@@ -164,7 +164,8 @@ def train():
             train_one_epoch(sess, ops, placeholders, train_writer)
             save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
             log_string("Model saved in file: {0}".format(save_path))
-            val_loss = eval_one_epoch(sess, ops, placeholders, test_writer)
+            if epoch > 10:
+                val_loss = eval_one_epoch(sess, ops, placeholders, test_writer)
     TRAIN_DATASET.stop_loading()
     train_produce_thread.join()
 
