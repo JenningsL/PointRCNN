@@ -94,8 +94,6 @@ def train():
     ''' Main function for training and simple evaluation. '''
 
     with tf.Graph().as_default():
-        rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=True)
-        placeholders = rpn_model.placeholders
         with tf.device('/gpu:0'):
             # is_training_pl = tf.placeholder(tf.bool, shape=())
 
@@ -108,6 +106,8 @@ def train():
             tf.summary.scalar('bn_decay', bn_decay)
 
             # Get model and losses
+            rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, bn_decay=bn_decay, is_training=True)
+            placeholders = rpn_model.placeholders
             end_points = rpn_model.end_points
             loss, loss_endpoints = rpn_model.get_loss()
 

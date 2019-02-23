@@ -98,8 +98,6 @@ def train():
 
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            rcnn_model = RCNN(BATCH_SIZE, NUM_POINT, TRAIN_DATASET.num_channel, is_training=True)
-            placeholders = rcnn_model.placeholders
             # Note the global_step=batch parameter to minimize.
             # That tells the optimizer to increment the 'batch' parameter
             # for you every time it trains.
@@ -109,6 +107,8 @@ def train():
             tf.summary.scalar('bn_decay', bn_decay)
 
             # Get model and losses
+            rcnn_model = RCNN(BATCH_SIZE, NUM_POINT, TRAIN_DATASET.num_channel, bn_decay=bn_decay, is_training=True)
+            placeholders = rcnn_model.placeholders
             end_points = rcnn_model.end_points
             loss, loss_endpoints = rcnn_model.get_loss()
 
