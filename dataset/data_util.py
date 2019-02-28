@@ -70,10 +70,8 @@ def find_match_label(prop_corners, labels_corners):
         intersection = target.intersection(label).area
         iou = intersection / (area1 + area2 - intersection)
         # if a proposal cover enough ground truth, take it as positive
-        if intersection / area1 >= 0.8:
-           iou = 0.66
-        # print(area1, area2, intersection)
-        # print(iou)
+        #if intersection / area1 >= 0.8:
+        #   iou = 0.66
         if iou > largest_iou:
             largest_iou = iou
             largest_idx = i

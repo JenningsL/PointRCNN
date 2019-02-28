@@ -196,23 +196,25 @@ class Dataset(object):
         self.proposals = {}
         self.pc_choices = {}
         self.pc_seg = {}
-        print('Non empty frames: ', len(frame_ids))
+        print('Loading proposals for {0} frames...'.format(len(frame_ids)))
         for i in range(len(frame_ids)):
             frame_id = frame_ids[i]
             self.pc_choices[frame_id] = pc_choices[i]
             self.pc_seg[frame_id] = segmentation[i]
-            for j in range(len(centers[i])):
+            for j in range(len(nms_indices[i])):
                 if nms_indices[i][j] == -1:
                     continue
+                ind = nms_indices[i][j]
                 # to ProposalObject
-                x,y,z = centers[i][j]
-                l, h, w = sizes[i][j]
-                ry = angles[i][j]
+                x,y,z = centers[i][ind]
+                l, h, w = sizes[i][ind]
+                ry = angles[i][ind]
                 proposal = ProposalObject(np.array([x,y,z,l, h, w, ry]))
                 frame_id = int(frame_ids[i])
                 if frame_id not in self.proposals:
                     self.proposals[frame_id] = []
                 self.proposals[frame_id].append(proposal)
+        print('Loading proposals done.')
 
     def get_proposals(self, data_idx):
         if data_idx in self.proposals:
@@ -226,32 +228,53 @@ class Dataset(object):
         total_iou_2d = 0
         total_angle_res = 0
         total = 0
+        total_num = 0
+        total_recall = 0
         for frame_id in self.frame_ids:
             print(frame_id)
             data_idx = int(frame_id)
+            pc_velo = self.kitti_dataset.get_lidar(data_idx)
+            image = self.kitti_dataset.get_image(data_idx)
             calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
+            img_height, img_width = image.shape[0:2]
+            _, pc_image_coord, img_fov_inds = get_lidar_in_image_fov(pc_velo[:,0:3],
+                calib, 0, 0, img_width, img_height, True)
+            pc_velo = pc_velo[img_fov_inds, :]
+            pc_rect = np.zeros_like(pc_velo)
+            pc_rect[:,0:3] = calib.project_velo_to_rect(pc_velo[:,0:3])
+            pc_rect[:,3] = pc_velo[:,3]
             objects = self.kitti_dataset.get_label_objects(data_idx)
-            proposals = self.get_proposals(data_idx)
             objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
+            proposals = self.get_proposals(data_idx)
             gt_boxes = [] # ground truth boxes
             gt_boxes_xy = []
+            recall = np.zeros((len(objects),))
             for obj in objects:
                 _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
-                # doesn't skip label with no point here
+                # skip label with no point
+                _,obj_mask = extract_pc_in_box3d(pc_rect, obj_box_3d)
+                if np.sum(obj_mask) == 0:
+                    continue
                 gt_boxes.append(obj_box_3d)
                 gt_boxes_xy.append(obj_box_3d[:4, [0,2]])
             for prop in proposals:
                 b2d,prop_box_3d = utils.compute_box_3d(prop, calib.P)
                 prop_box_xy = prop_box_3d[:4, [0,2]]
                 gt_idx, gt_iou = find_match_label(prop_box_xy, gt_boxes_xy)
-                if gt_iou <= 0.55:
+                if if gt_idx == -1:
                     continue
+                if gt_iou >= 0.5:
+                    recall[gt_idx] = 1
                 total_iou_2d += gt_iou
                 ry_residual = abs(prop.ry - objects[gt_idx].ry)
                 total_angle_res += ry_residual
                 total += 1
+            total_recall += np.sum(recall)
+            total_gt += len(objects)
         print('Average IOU 2d {0}'.format(total_iou_2d/total))
         print('Average angle residual {0}'.format(total_angle_res/total))
+        print('Average proposal number: {0}'.format(total_num/len(self.frame_ids)))
+        print('Recall: {0}'.format(float(total_recall)/total_gt))
 
     def load_frame_data(self, data_idx_str, aug):
         '''load one frame'''
@@ -345,8 +368,9 @@ class Dataset(object):
         proposal_expand = copy.deepcopy(proposal_)
         proposal_expand.l += 1
         proposal_expand.w += 1
-        _, box_3d = utils.compute_box_3d(proposal_expand, calib.P)
+        _, box_3d = utils.compute_box_3d(proposal_, calib.P)
         _, mask = extract_pc_in_box3d(pc_rect, box_3d)
+        # ignore proposal with no points
         if(np.sum(mask) == 0):
             return False
 
@@ -400,7 +424,7 @@ if __name__ == '__main__':
 
     # statistic
     '''
-    dataset = Dataset(512, kitti_path, split)
+    dataset = Dataset(512, kitti_path, split, True, ['Car'], [1])
     dataset.stat_proposal()
     sys.exit()
     '''
