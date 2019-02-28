@@ -43,7 +43,7 @@ def log_string(out_str):
     print(out_str)
 
 #TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=False)
-TEST_DATASET = Dataset(NUM_POINT, KITTI_PATH, SPLIT, is_training=False)
+TEST_DATASET = Dataset(NUM_POINT, KITTI_PATH, SPLIT, is_training=(SPLIT in ['train', 'val']))
 type_list = ['NonObject', 'Car', 'Pedestrian', 'Cyclist']
 
 calib_cache = {}

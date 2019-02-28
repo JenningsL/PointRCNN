@@ -261,7 +261,7 @@ class Dataset(object):
                 b2d,prop_box_3d = utils.compute_box_3d(prop, calib.P)
                 prop_box_xy = prop_box_3d[:4, [0,2]]
                 gt_idx, gt_iou = find_match_label(prop_box_xy, gt_boxes_xy)
-                if if gt_idx == -1:
+                if gt_idx == -1:
                     continue
                 if gt_iou >= 0.5:
                     recall[gt_idx] = 1
