@@ -276,7 +276,7 @@ class RPN(object):
         end_points = self.get_segmentation_net(point_cloud, is_training, bn_decay, end_points)
         seg_softmax = tf.nn.softmax(end_points['foreground_logits'], axis=-1) + self.placeholders['img_seg_softmax']
         seg_logits = tf.cond(is_training, lambda: tf.one_hot(mask_label, NUM_SEG_CLASSES), lambda: seg_softmax)
-        end_points['point_feats_fuse'] = tf.concat([end_points['point_feats_fuse'], seg_logits], axis=-1)
+        #end_points['point_feats_fuse'] = tf.concat([end_points['point_feats_fuse'], seg_logits], axis=-1)
         # fg_point_feats include xyz
         fg_point_feats, end_points = point_cloud_masking(
             end_points['point_feats_fuse'], seg_logits,

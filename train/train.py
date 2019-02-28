@@ -173,8 +173,8 @@ def train():
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
             # eval iou and recall is slow
-            #eval_iou_recall = (epoch > 5 and epoch % 2 == 0)
-            eval_iou_recall = epoch % 2 == 0
+            eval_iou_recall = (epoch > 5 and epoch % 2 == 0)
+            #eval_iou_recall = epoch % 2 == 0
             train_one_epoch(sess, ops, placeholders, train_writer, eval_iou_recall)
             #if epoch % 3 == 0:
             # Save the variables to disk.
