@@ -194,7 +194,9 @@ class RPN(object):
         #end_points['point_feats_fuse'] = end_points['point_feats']
         #semantic_features = l0_points
         # FC layers
-        net = tf_util.conv1d(semantic_features, 128, 1, padding='VALID', bn=True,
+        net = tf_util.dropout(semantic_features, keep_prob=0.5,
+            is_training=is_training, scope='dp0')
+        net = tf_util.conv1d(net, 128, 1, padding='VALID', bn=True,
             is_training=is_training, scope='conv1d-fc1', bn_decay=bn_decay)
         net = tf_util.dropout(net, keep_prob=0.7,
             is_training=is_training, scope='dp1')
@@ -295,7 +297,7 @@ class RPN(object):
         #end_points['point_feats_fuse'] = tf.concat([end_points['point_feats_fuse'], seg_logits], axis=-1)
         # fg_point_feats include xyz
         fg_point_feats, end_points = point_cloud_masking(
-            end_points['point_feats_fuse'], seg_logits,
+            end_points['point_feats'], seg_logits,
             end_points, xyz_only=False) # BxNUM_FG_POINTxD
         proposals = self.get_region_proposal_net(fg_point_feats, is_training, bn_decay, end_points)
         proposals_reshaped = tf.reshape(proposals, [self.batch_size, NUM_FG_POINT, -1])
