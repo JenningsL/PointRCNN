@@ -18,7 +18,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'visualize/mayavi'))
 from kitti_object import *
 from box_encoder import BoxEncoder
 import kitti_util as utils
-from data_util import rotate_points_along_y, shift_point_cloud, extract_pc_in_box3d
+from data_util import rotate_points_along_y, shift_point_cloud, extract_pc_in_box3d, apply_pca_jitter
 from data_conf import type_whitelist, difficulties_whitelist
 
 g_type2onehotclass = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
@@ -70,7 +70,7 @@ class Dataset(object):
             #print('loading ' + frame_id)
             for x in range(self.AUG_X):
                 frame_data = \
-                    self.load_frame_data(frame_id, random_flip=aug, random_rotate=aug, random_shift=aug)
+                    self.load_frame_data(frame_id, random_flip=aug, random_rotate=aug, random_shift=aug, pca_jitter=aug)
                 frame_data['frame_id'] = frame_id
                 self.data_buffer.put(frame_data)
             i = (i + 1) % len(self.frame_ids)
@@ -174,7 +174,7 @@ class Dataset(object):
         raw_input()
 
     def load_frame_data(self, data_idx_str,
-        random_flip=False, random_rotate=False, random_shift=False):
+        random_flip=False, random_rotate=False, random_shift=False, pca_jitter=False):
         '''load one frame'''
         start = time.time()
         data_idx = int(data_idx_str)
@@ -187,10 +187,24 @@ class Dataset(object):
         image = self.kitti_dataset.get_image(data_idx)
         pc_velo = self.kitti_dataset.get_lidar(data_idx)
         img_height, img_width = image.shape[0:2]
+        # data augmentation
+        if pca_jitter:
+            image = apply_pca_jitter(image)[0]
+        if random_flip and np.random.random()>0.5: # 50% chance flipping
+            pc_velo[:,1] *= -1
+            # NOTICE: to flip the scene, optical center also need to be adjusted
+            calib.P[0,2] = img_width-calib.P[0,2]
+            image = np.flip(image, axis=1)
+            for obj in objects:
+                obj.t = [-obj.t[0], obj.t[1], obj.t[2]]
+                # ensure that ry is [-pi, pi]
+                if obj.ry >= 0:
+                    obj.ry = np.pi - obj.ry
+                else:
+                    obj.ry = -np.pi - obj.ry
         _, pc_image_coord, img_fov_inds = get_lidar_in_image_fov(pc_velo[:,0:3],
             calib, 0, 0, img_width, img_height, True)
         pc_velo = pc_velo[img_fov_inds, :]
-        #print(data_idx_str, pc_velo.shape[0])
         choice = np.random.choice(pc_velo.shape[0], self.npoints, replace=True)
         point_set = pc_velo[choice, :]
         pc_rect = np.zeros_like(point_set)
@@ -200,17 +214,7 @@ class Dataset(object):
         objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
         gt_boxes = [] # ground truth boxes
         # data augmentation
-        if random_flip and np.random.random()>0.5: # 50% chance flipping
-            pc_rect[:,0] *= -1
-            for obj in objects:
-                obj.t = [-obj.t[0], obj.t[1], obj.t[2]]
-                # ensure that ry is [-pi, pi]
-                if obj.ry >= 0:
-                    obj.ry = np.pi - obj.ry
-                else:
-                    obj.ry = -np.pi - obj.ry
-
-        if random_rotate:
+        if random_rotate and False:
             ry = (np.random.random() - 0.5) * math.radians(20) # -10~10 degrees
             pc_rect[:,0:3] = rotate_points_along_y(pc_rect[:,0:3], ry)
             for obj in objects:
@@ -236,6 +240,7 @@ class Dataset(object):
             obj_idxs = np.where(obj_mask)[0]
             # data augmentation
             # FIXME: jitter point will make valid loss growing
+            # Also may go out of image view
             if random_shift and False: # jitter object points
                 pc_rect[obj_idxs,:3] = shift_point_cloud(pc_rect[obj_idxs,:3], 0.02)
             for idx in obj_idxs:
@@ -261,17 +266,17 @@ if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
 
-    sys.path.append('../models')
+    sys.path.append('models')
     from collections import namedtuple
     import tensorflow as tf
     from img_vgg_pyramid import ImgVggPyr
     import projection
     VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
 
-    # dataset = Dataset(16384, kitti_path, split, types=['Car'], difficulties=[1])
-    dataset = Dataset(16384, kitti_path, split, is_training=False)
-    dataset.load(True)
-    produce_thread = threading.Thread(target=dataset.load, args=(False,))
+    dataset = Dataset(16384, kitti_path, split, is_training=True)
+    # dataset = Dataset(16384, kitti_path, split, is_training=False)
+    # dataset.load(True)
+    produce_thread = threading.Thread(target=dataset.load, args=(True,))
     produce_thread.start()
     i = 0
     total = 0
@@ -286,6 +291,7 @@ if __name__ == '__main__':
                 'l2_weight_decay': 0.0005
             }))
 
+            print(batch_data['calib'])
             pts2d = projection.tf_rect_to_image(tf.slice(batch_data['pointcloud'],[0,0,0],[-1,-1,3]), batch_data['calib'])
             pts2d = tf.cast(pts2d, tf.int32) #(B,N,2)
             indices = tf.concat([
@@ -298,12 +304,15 @@ if __name__ == '__main__':
                 [1, 16384, -1])  # (B,N,C)
             res = sess.run(point_img_feats)
             p2d = sess.run(pts2d)
+            indices = sess.run(indices)
+            print(p2d)
+            print(np.sum(indices<0))
             print(batch_data['images'][0,p2d[0][0][1],p2d[0][0][0]])
-            print(res[0][0])
-            break
+            # print(res[0][0])
+            # break
             img = batch_data['images'][0]/255
-            for i,p in enumerate(res[0]):
-                if batch_data['seg_label'][0][i] != 1:
+            for i,p in enumerate(p2d[0]):
+                if batch_data['seg_label'][0][i] == 0:
                     continue
                 cv2.circle(img,(p[0], p[1]),1,(255,0,0),1)
             cv2.imshow('img', img)
