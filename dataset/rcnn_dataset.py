@@ -26,7 +26,8 @@ g_type2onehotclass = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
 NUM_HEADING_BIN = 9
 NUM_CENTER_BIN = 6
 CENTER_SEARCH_RANGE = 1.5
-HEADING_SEARCH_RANGE = 0.25*np.pi
+#HEADING_SEARCH_RANGE = 0.25*np.pi
+HEADING_SEARCH_RANGE = 0.5*np.pi
 
 box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
 
@@ -230,6 +231,7 @@ class Dataset(object):
         total = 0
         total_num = 0
         total_recall = 0
+        total_gt = 0
         for frame_id in self.frame_ids:
             print(frame_id)
             data_idx = int(frame_id)
@@ -271,6 +273,7 @@ class Dataset(object):
                 total += 1
             total_recall += np.sum(recall)
             total_gt += len(objects)
+            total_num += len(proposals)
         print('Average IOU 2d {0}'.format(total_iou_2d/total))
         print('Average angle residual {0}'.format(total_angle_res/total))
         print('Average proposal number: {0}'.format(total_num/len(self.frame_ids)))
@@ -336,13 +339,13 @@ class Dataset(object):
                 show_boxes.append(prop_box_3d)
             return sample['class']
         aug_proposals = []
-        AUG_X = {1:2, 2:5, 3:10}
+        AUG_X = {1:5, 2:5, 3:5}
         for prop in proposals:
             cls = process_proposal(prop)
             if not aug or cls <= 0:
                 continue
             for x in range(AUG_X[cls]):
-                prop_ = random_shift_box3d(copy.deepcopy(prop), 0.01)
+                prop_ = random_shift_box3d(copy.deepcopy(prop), 0.1)
                 aug_proposals.append(prop_)
         for prop in aug_proposals:
             process_proposal(prop)
@@ -423,10 +426,10 @@ if __name__ == '__main__':
     split = sys.argv[2]
 
     # statistic
-    '''
     dataset = Dataset(512, kitti_path, split, True, ['Car'], [1])
     dataset.stat_proposal()
     sys.exit()
+    '''
     '''
 
     sys.path.append('models')
