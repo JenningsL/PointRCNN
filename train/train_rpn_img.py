@@ -200,6 +200,9 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
     total_tp = 0
     total_fp = 0
     total_fn = 0
+    tp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+    fp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+    fn = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
     loss_sum = 0
     iou2ds_sum = 0
     iou3ds_sum = 0
@@ -252,13 +255,15 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
         correct = np.sum(preds_val == batch_data['seg_label'])
-        tp = np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] != 0))
-        fp = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 0))
-        fn = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != 0))
         total_correct += correct
-        total_tp += tp
-        total_fp += fp
-        total_fn += fn
+        total_tp += np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] != 0))
+        total_fp += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 0))
+        total_fn += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != 0))
+        for c in ['Car', 'Pedestrian', 'Cyclist']:
+            one_hot_class = g_type2onehotclass[c]
+            tp[c] += np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] == one_hot_class))
+            fp[c] += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != one_hot_class))
+            fn[c] += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == one_hot_class))
         total_seen += NUM_POINT * BATCH_SIZE
         loss_sum += loss_val
 
@@ -281,11 +286,22 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
             if np.isnan(loss_sum):
                 loss_endpoints = sess.run(ops['loss_endpoints'], feed_dict=feed_dict)
                 print('loss_endpoints: ', loss_endpoints)
+            for c in ['Car', 'Pedestrian', 'Cyclist']:
+                if (tp[c]+fn[c] == 0) or (tp[c]+fp[c]) == 0:
+                    continue
+                print(c + ' segmentation recall: %f'% \
+                    (float(tp[c])/(tp[c]+fn[c])))
+                print(c + ' segmentation precision: %f'% \
+                    (float(tp[c])/(tp[c]+fp[c])))
+            # reset statistic
             total_correct = 0
             total_seen = 0
             total_tp = 0
             total_fp = 0
             total_fn = 0
+            tp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+            fp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+            fn = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
             loss_sum = 0
             iou2ds_sum = 0
             iou3ds_sum = 0
