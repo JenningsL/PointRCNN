@@ -316,7 +316,7 @@ class Dataset(object):
         objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
         gt_boxes = [] # ground truth boxes
         gt_boxes_xy = []
-        recall = np.zeros((len(objects),))
+        recall = np.zeros((len(objects),), dtype=np.int32)
         for obj in objects:
             _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
             # skip label with no point
@@ -356,7 +356,7 @@ class Dataset(object):
                 aug_proposals.append(prop_)
         # add more proposals using label to increase training samples
         if self.split == 'train':
-            miss_objs = objects[recall==0]
+            miss_objs = [objects[i] for i in range(len(objects)) if recall[i]==0]
             aug_proposals += self.fill_proposals_with_gt(miss_objs)
         for prop in aug_proposals:
             process_proposal(prop)
@@ -437,10 +437,10 @@ if __name__ == '__main__':
     split = sys.argv[2]
 
     # statistic
+    '''
     dataset = Dataset(512, kitti_path, split, True, ['Car'], [1])
     dataset.stat_proposal()
     sys.exit()
-    '''
     '''
 
     sys.path.append('models')
