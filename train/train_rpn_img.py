@@ -7,6 +7,7 @@ import importlib
 import numpy as np
 import tensorflow as tf
 slim = tf.contrib.slim
+from tensorflow.python import pywrap_tensorflow
 import pickle
 from threading import Thread
 from datetime import datetime
@@ -15,9 +16,10 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
+from data_conf import g_type2onehotclass
 from rpn_dataset import Dataset
 from model_util import NUM_FG_POINT
-from rpn import RPN, NUM_SEG_CLASSES
+from rpn_img import RPN, NUM_SEG_CLASSES
 import train_util
 
 parser = argparse.ArgumentParser()
@@ -87,7 +89,7 @@ def get_bn_decay(batch):
 TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True)
 # data loading threads
 # FIXME: don't use data augmentation with image feature before calib matrix is adjust accordingly
-train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(False,))
+train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
 train_produce_thread.start()
 
 def train():
@@ -159,7 +161,19 @@ def train():
             init = tf.global_variables_initializer()
             sess.run(init)
         else:
-            saver.restore(sess, FLAGS.restore_model_path)
+            #saver.restore(sess, FLAGS.restore_model_path)
+            # restore part of the model
+            init = tf.global_variables_initializer()
+            sess.run(init)
+            reader = pywrap_tensorflow.NewCheckpointReader(FLAGS.restore_model_path)
+            var_to_shape_map = reader.get_variable_to_shape_map()
+            var_list = [key for key in var_to_shape_map]
+            #print(var_list)
+            variables = tf.contrib.framework.get_variables_to_restore()
+            #print([v.name for v in variables])
+            variables_to_restore = filter(lambda v: v.name.split(':')[0] in var_list, variables)
+            load_saver = tf.train.Saver(variables_to_restore)
+            load_saver.restore(sess, FLAGS.restore_model_path)
 
         ops = {
             'loss': loss,
@@ -173,8 +187,9 @@ def train():
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
             # eval iou and recall is slow
-            eval_iou_recall = (epoch > 5 and epoch % 2 == 0)
-            #eval_iou_recall = epoch % 2 == 0
+            #eval_iou_recall = (epoch > 5 and epoch % 2 == 0)
+            #eval_iou_recall = epoch % 5 == 0
+            eval_iou_recall = epoch % 2 == 0
             train_one_epoch(sess, ops, placeholders, train_writer, eval_iou_recall)
             #if epoch % 3 == 0:
             # Save the variables to disk.
