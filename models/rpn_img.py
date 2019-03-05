@@ -309,6 +309,15 @@ class RPN(object):
         end_points['gt_box_of_point'].set_shape([self.batch_size, NUM_FG_POINT, 8, 3])
         return end_points
 
+    def get_seg_loss(self):
+        pls = self.placeholders
+        end_points = self.end_points
+        batch_size = self.batch_size
+        # 3D Segmentation loss
+        mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(pls['seg_labels'], NUM_SEG_CLASSES, axis=-1))
+        tf.summary.scalar('mask loss', mask_loss)
+        return mask_loss, {}
+
     def get_loss(self):
         pls = self.placeholders
         end_points = self.end_points

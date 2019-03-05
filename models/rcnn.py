@@ -19,7 +19,8 @@ from collections import namedtuple
 NUM_HEADING_BIN = 9
 NUM_CENTER_BIN = 6
 CENTER_SEARCH_RANGE = 1.5
-HEADING_SEARCH_RANGE = 0.25*np.pi
+#HEADING_SEARCH_RANGE = 0.25*np.pi
+HEADING_SEARCH_RANGE = 0.5*np.pi
 
 class RCNN(object):
     def __init__(self, batch_size, num_point, num_channel=133, bn_decay=None, is_training=True):

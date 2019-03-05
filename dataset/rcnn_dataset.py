@@ -26,7 +26,8 @@ g_type2onehotclass = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
 NUM_HEADING_BIN = 9
 NUM_CENTER_BIN = 6
 CENTER_SEARCH_RANGE = 1.5
-HEADING_SEARCH_RANGE = 0.25*np.pi
+#HEADING_SEARCH_RANGE = 0.25*np.pi
+HEADING_SEARCH_RANGE = 0.5*np.pi
 
 box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
 
@@ -163,24 +164,20 @@ class Dataset(object):
         fig = draw_gt_boxes3d([prop_box], fig, draw_text=False, color=(1, 1, 1))
         raw_input()
 
-    def get_proposals_gt(self, data_idx):
-        # Generate proposals from labels for now
-        objects = self.kitti_dataset.get_label_objects(data_idx)
-        objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
-        proposals = []
-        avg_y = 0
-        for obj in objects:
-            center = obj.t + np.random.normal(0, 0.1, 3)
-            ry = obj.ry + np.random.normal(0, np.pi/8, 1)
-            # ry = obj.ry
-            l = obj.l + np.random.normal(0, 0.1, 1)[0]
-            h = obj.h + np.random.normal(0, 0.1, 1)[0]
-            w = obj.w + np.random.normal(0, 0.1, 1)[0]
-            proposals.append(ProposalObject(np.array([center[0],center[1],center[2],l, h, w, ry])))
-            avg_y += obj.t[1]
+    def get_proposals_gt(self, obj):
+        center = obj.t + np.random.normal(0, 0.1, 3)
+        ry = obj.ry + np.random.normal(0, np.pi/8, 1)
+        # ensure that ry is [-pi, pi]
+        if obj.ry > np.pi:
+            obj.ry -= 2*np.pi
+        elif obj.ry < -np.pi:
+            obj.ry += 2*np.pi
+        # ry = obj.ry
+        l = obj.l + np.random.normal(0, 0.1, 1)[0]
+        h = obj.h + np.random.normal(0, 0.1, 1)[0]
+        w = obj.w + np.random.normal(0, 0.1, 1)[0]
 
-        # TODO: negative samples
-        return proposals
+        return ProposalObject(np.array([center[0],center[1],center[2],l, h, w, ry]))
 
     def _load_proposals(self, proposal_path):
         with open(proposal_path, 'rb') as f:
@@ -230,6 +227,7 @@ class Dataset(object):
         total = 0
         total_num = 0
         total_recall = 0
+        total_gt = 0
         for frame_id in self.frame_ids:
             print(frame_id)
             data_idx = int(frame_id)
@@ -271,10 +269,17 @@ class Dataset(object):
                 total += 1
             total_recall += np.sum(recall)
             total_gt += len(objects)
+            total_num += len(proposals)
         print('Average IOU 2d {0}'.format(total_iou_2d/total))
         print('Average angle residual {0}'.format(total_angle_res/total))
         print('Average proposal number: {0}'.format(total_num/len(self.frame_ids)))
         print('Recall: {0}'.format(float(total_recall)/total_gt))
+
+    def fill_proposals_with_gt(self, objects):
+        gt_proposals = []
+        for obj in objects:
+            gt_proposals.append(self.get_proposals_gt(obj))
+        return gt_proposals
 
     def load_frame_data(self, data_idx_str, aug):
         '''load one frame'''
@@ -311,9 +316,13 @@ class Dataset(object):
         objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
         gt_boxes = [] # ground truth boxes
         gt_boxes_xy = []
+        recall = np.zeros((len(objects),), dtype=np.int32)
         for obj in objects:
             _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
-            # doesn't skip label with no point here
+            # skip label with no point
+            _,obj_mask = extract_pc_in_box3d(pc_rect, obj_box_3d)
+            if np.sum(obj_mask) == 0:
+                continue
             gt_boxes.append(obj_box_3d)
             gt_boxes_xy.append(obj_box_3d[:4, [0,2]])
         # proposals = self.get_proposals_gt(data_idx)
@@ -334,16 +343,21 @@ class Dataset(object):
             else:
                 positive_samples.append(sample)
                 show_boxes.append(prop_box_3d)
+                recall[max_idx] = 1
             return sample['class']
         aug_proposals = []
-        AUG_X = {1:2, 2:5, 3:10}
+        AUG_X = {1:3, 2:3, 3:3}
         for prop in proposals:
             cls = process_proposal(prop)
             if not aug or cls <= 0:
                 continue
             for x in range(AUG_X[cls]):
-                prop_ = random_shift_box3d(copy.deepcopy(prop), 0.01)
+                prop_ = random_shift_box3d(copy.deepcopy(prop), 0.1)
                 aug_proposals.append(prop_)
+        # add more proposals using label to increase training samples
+        if self.split == 'train':
+            miss_objs = [objects[i] for i in range(len(objects)) if recall[i]==0]
+            aug_proposals += self.fill_proposals_with_gt(miss_objs)
         for prop in aug_proposals:
             process_proposal(prop)
         if self.is_training:
