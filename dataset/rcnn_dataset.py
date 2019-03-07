@@ -62,14 +62,15 @@ class Dataset(object):
         self.last_sample_id = None
         # preloading
         self.stop = False
-        self.data_buffer = Queue(maxsize=128)
-        self._load_proposals('rpn_out_{0}.pkl'.format(split))
+        self.data_buffer = Queue(maxsize=1024)
 
     def load_split_ids(self, split):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
             return [line.rstrip('\n') for line in f]
 
     def load(self, aug=False):
+        # load proposals
+        self._load_proposals('rpn_out_{0}.pkl'.format(self.split))
         i = 0
         last_sample_id = None
         while not self.stop:
@@ -202,11 +203,11 @@ class Dataset(object):
             self.pc_seg[frame_id] = segmentation[i]
             # Do nms on different parameters
             if self.split == 'train':
-                nms_thres = 0.85
-                max_keep = 300
+                nms_thres = 0.7
+                max_keep = 100
             else:
                 nms_thres = 0.8
-                max_keep = 100
+                max_keep = 50
             bev_boxes = []
             for ry, center, size in zip(angles[i], centers[i], sizes[i]):
                 bev_boxes.append([center[0], center[2], size[0], size[2], 180*ry/np.pi])
@@ -464,7 +465,7 @@ if __name__ == '__main__':
     VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
 
     dataset = Dataset(512, kitti_path, split, True)
-    dataset.load(False)
+    dataset.load(True)
     produce_thread = threading.Thread(target=dataset.load, args=(True,))
     produce_thread.start()
     i = 0
