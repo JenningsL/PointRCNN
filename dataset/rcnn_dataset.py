@@ -15,6 +15,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'kitti'))
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 sys.path.append(os.path.join(ROOT_DIR, 'visualize/mayavi'))
+from nms_rotate import nms_rotate_cpu
 from kitti_object import *
 import kitti_util as utils
 from box_encoder import BoxEncoder
@@ -61,14 +62,15 @@ class Dataset(object):
         self.last_sample_id = None
         # preloading
         self.stop = False
-        self.data_buffer = Queue(maxsize=128)
-        self._load_proposals('rpn_out_{0}.pkl'.format(split))
+        self.data_buffer = Queue(maxsize=1024)
 
     def load_split_ids(self, split):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
             return [line.rstrip('\n') for line in f]
 
     def load(self, aug=False):
+        # load proposals
+        self._load_proposals('rpn_out_{0}.pkl'.format(self.split))
         i = 0
         last_sample_id = None
         while not self.stop:
@@ -142,12 +144,13 @@ class Dataset(object):
 
         return batch, is_last_batch
 
-    def viz_frame(self, pc_rect, mask, gt_boxes):
+    def viz_frame(self, pc_rect, mask, gt_boxes, proposals):
         import mayavi.mlab as mlab
         from viz_util import draw_lidar, draw_lidar_simple, draw_gt_boxes3d
         fig = draw_lidar(pc_rect)
         fig = draw_lidar(pc_rect[mask==1], fig=fig, pts_color=(1, 1, 1))
         fig = draw_gt_boxes3d(gt_boxes, fig, draw_text=False, color=(1, 1, 1))
+        fig = draw_gt_boxes3d(proposals, fig, draw_text=False, color=(1, 0, 0))
         raw_input()
 
     def viz_sample(self, sample):
@@ -180,6 +183,7 @@ class Dataset(object):
         return ProposalObject(np.array([center[0],center[1],center[2],l, h, w, ry]))
 
     def _load_proposals(self, proposal_path):
+        print('Loading proposals...')
         with open(proposal_path, 'rb') as f:
             frame_ids = pickle.load(f)
             segmentation = pickle.load(f)
@@ -193,15 +197,23 @@ class Dataset(object):
         self.proposals = {}
         self.pc_choices = {}
         self.pc_seg = {}
-        print('Loading proposals for {0} frames...'.format(len(frame_ids)))
         for i in range(len(frame_ids)):
             frame_id = frame_ids[i]
             self.pc_choices[frame_id] = pc_choices[i]
             self.pc_seg[frame_id] = segmentation[i]
-            for j in range(len(nms_indices[i])):
-                if nms_indices[i][j] == -1:
-                    continue
-                ind = nms_indices[i][j]
+            # Do nms on different parameters
+            if self.split == 'train':
+                nms_thres = 0.7
+                max_keep = 100
+            else:
+                nms_thres = 0.8
+                max_keep = 50
+            bev_boxes = []
+            for ry, center, size in zip(angles[i], centers[i], sizes[i]):
+                bev_boxes.append([center[0], center[2], size[0], size[2], 180*ry/np.pi])
+            bev_boxes = np.array(bev_boxes)
+            nms_idx = nms_rotate_cpu(bev_boxes, scores[i], nms_thres, max_keep)
+            for ind in nms_idx:
                 # to ProposalObject
                 x,y,z = centers[i][ind]
                 l, h, w = sizes[i][ind]
@@ -336,9 +348,11 @@ class Dataset(object):
             prop_box_xy = prop_box_3d[:4, [0,2]]
             max_idx, max_iou = find_match_label(prop_box_xy, gt_boxes_xy)
             sample = self.get_sample(pc_rect, image, calib, prop, max_iou, max_idx, objects)
+            # print(max_iou)
             if not sample:
                 return -1
             if sample['class'] == 0:
+                show_boxes.append(prop_box_3d)
                 negative_samples.append(sample)
             else:
                 positive_samples.append(sample)
@@ -346,7 +360,7 @@ class Dataset(object):
                 recall[max_idx] = 1
             return sample['class']
         aug_proposals = []
-        AUG_X = {1:3, 2:3, 3:3}
+        AUG_X = {1:1, 2:2, 3:2}
         for prop in proposals:
             cls = process_proposal(prop)
             if not aug or cls <= 0:
@@ -366,7 +380,7 @@ class Dataset(object):
         else:
             samples = positive_samples + negative_samples
         random.shuffle(samples)
-        # self.viz_frame(pc_rect, np.zeros((pc_rect.shape[0],)), show_boxes)
+        # self.viz_frame(pc_rect, np.zeros((pc_rect.shape[0],)), gt_boxes, show_boxes)
         return samples
 
     def get_sample(self, pc_rect, image, calib, proposal_, max_iou, max_idx, objects):
@@ -450,8 +464,8 @@ if __name__ == '__main__':
     import projection
     VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
 
-    dataset = Dataset(512, kitti_path, split, False, ['Car'], [0])
-    dataset.load(False)
+    dataset = Dataset(512, kitti_path, split, True)
+    dataset.load(True)
     produce_thread = threading.Thread(target=dataset.load, args=(True,))
     produce_thread.start()
     i = 0
