@@ -118,13 +118,13 @@ def box3d_iou(corners1, corners2):
     p1 = Polygon(bev_box1)
     p2 = Polygon(bev_box2)
     intersection = p1.intersection(p2).area
-    iou_2d = intersection / (p1.area + p2.area - intersection)
+    iou_2d = intersection / (p1.area + p2.area - intersection + 0.0000001)
     ymax = min(corners1[0,1], corners2[0,1])
     ymin = max(corners1[4,1], corners2[4,1])
     inter_vol = intersection * max(0.0, ymax-ymin)
     vol1 = box3d_vol(corners1)
     vol2 = box3d_vol(corners2)
-    iou_3d = inter_vol / (vol1 + vol2 - inter_vol)
+    iou_3d = inter_vol / (vol1 + vol2 - inter_vol + 0.0000001)
     return iou_3d, iou_2d
 
 
