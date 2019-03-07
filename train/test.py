@@ -19,7 +19,7 @@ from rpn_dataset import Dataset
 from train_util import compute_proposal_recall, compute_box3d_iou
 from model_util import NUM_FG_POINT
 from box_encoder import BoxEncoder
-from rpn import RPN
+from rpn import RPN, NUM_SEG_CLASSES
 from img_seg_net import ImgSegNet
 
 parser = argparse.ArgumentParser()
@@ -73,7 +73,6 @@ def test(split):
 
         saver.restore(sess, FLAGS.model_path)
 
-    '''
     with tf.Graph().as_default():
         with tf.device('/gpu:0'):
             img_seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT, num_channel=4, bn_decay=None, is_training=is_training)
@@ -89,8 +88,7 @@ def test(split):
         config.log_device_placement = False
         sess1 = tf.Session(config=config)
 
-        saver1.restore(sess1, './log_img/bk/model.ckpt.029')
-    '''
+        saver1.restore(sess1, './log_img/model.ckpt')
 
     log_string(str(datetime.now()))
 
@@ -138,7 +136,6 @@ def test(split):
         }
 
         # segmentaion with image
-        '''
         seg_pls = img_seg_net.placeholders
         img_seg_logits = sess1.run(seg_softmax, feed_dict={
             seg_pls['pointclouds']: batch_data['pointcloud'],
@@ -147,15 +144,15 @@ def test(split):
             seg_pls['seg_labels']: batch_data['seg_label'],
             seg_pls['is_training_pl']: is_training
         })
-        img_seg_logits *= np.array([0, 1, 1, 1]) # weights
+        img_seg_logits *= np.array([0, 1]) # weights
         feed_dict[pls['img_seg_softmax']] = img_seg_logits
         '''
         # label to one_hot
-        nb_classes = 4
         targets = batch_data['seg_label']
-        img_seg_logits = np.eye(nb_classes)[targets]
+        img_seg_logits = np.eye(NUM_SEG_CLASSES)[targets]
         #img_seg_logits *= np.array([2, 2, 2, 2]) # weights
         feed_dict[pls['img_seg_softmax']] = img_seg_logits
+        '''
 
         logits_val, indices_val, centers_val, angles_val, sizes_val, corners_val, ind_val, scores_val \
         = sess.run([
@@ -187,6 +184,7 @@ def test(split):
         #if num_batches >= 500:
             break
 
+    '''
     with open('rpn_out_{0}.pkl'.format(split),'wb') as fout:
         pickle.dump(frame_ids, fout)
         pickle.dump(segmentation, fout)
@@ -199,6 +197,7 @@ def test(split):
         # pickle.dump(gt_boxes, fout)
         pickle.dump(pc_choices, fout)
     log_string('saved prediction')
+    '''
     dataset.stop_loading()
     produce_thread.join()
 

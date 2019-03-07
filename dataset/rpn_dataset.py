@@ -234,8 +234,8 @@ class Dataset(object):
                 # label without 3d points
                 # print('skip object without points')
                 continue
-            seg_mask[obj_mask] = g_type2onehotclass[obj.type]
-            #seg_mask[obj_mask] = 1
+            #seg_mask[obj_mask] = g_type2onehotclass[obj.type]
+            seg_mask[obj_mask] = 1
             gt_boxes.append(obj_box_3d)
             obj_idxs = np.where(obj_mask)[0]
             # data augmentation

@@ -24,7 +24,7 @@ NUM_CENTER_BIN = 12
 CENTER_SEARCH_RANGE = 3.0
 HEADING_SEARCH_RANGE = np.pi
 NUM_CHANNEL = 4
-NUM_SEG_CLASSES = 4
+NUM_SEG_CLASSES = 2
 
 class RPN(object):
     """docstring for RPN."""
