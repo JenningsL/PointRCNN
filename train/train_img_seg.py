@@ -85,7 +85,7 @@ def get_bn_decay(batch):
 TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True)
 # data loading threads
 # FIXME: don't use data augmentation with image feature before calib matrix is adjust accordingly
-train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(False,))
+train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
 train_produce_thread.start()
 
 def train():

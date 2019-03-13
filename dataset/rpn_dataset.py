@@ -20,6 +20,7 @@ from box_encoder import BoxEncoder
 import kitti_util as utils
 from data_util import rotate_points_along_y, shift_point_cloud, extract_pc_in_box3d, apply_pca_jitter
 from data_conf import type_whitelist, difficulties_whitelist
+from dense_pointcloud import DensePoints
 
 g_type2onehotclass = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
 NUM_HEADING_BIN = 12
@@ -47,7 +48,7 @@ class Dataset(object):
                 os.path.join(kitti_path, 'velodyne_points/data'),
                 kitti_path)
             self.frame_ids = range(self.kitti_dataset.num_samples)
-        # self.frame_ids = self.frame_ids[:100]
+        self.dense_points = DensePoints(kitti_path)
         self.num_channel = 4
         self.AUG_X = 1
 
@@ -190,9 +191,12 @@ class Dataset(object):
         # data augmentation
         if pca_jitter:
             image = apply_pca_jitter(image)[0]
-        if random_flip and np.random.random()>0.5: # 50% chance flipping
+
+        # if random_flip and np.random.random()>0.5: # 50% chance flipping
+        if random_flip and False:
             pc_velo[:,1] *= -1
-            # NOTICE: to flip the scene, optical center also need to be adjusted
+            # FIXME: to flip the scene, optical center also need to be adjusted
+            # dont use with image now
             calib.P[0,2] = img_width-calib.P[0,2]
             image = np.flip(image, axis=1)
             for obj in objects:
@@ -202,6 +206,8 @@ class Dataset(object):
                     obj.ry = np.pi - obj.ry
                 else:
                     obj.ry = -np.pi - obj.ry
+
+        # use original point cloud for rpn
         _, pc_image_coord, img_fov_inds = get_lidar_in_image_fov(pc_velo[:,0:3],
             calib, 0, 0, img_width, img_height, True)
         pc_velo = pc_velo[img_fov_inds, :]
@@ -210,10 +216,18 @@ class Dataset(object):
         pc_rect = np.zeros_like(point_set)
         pc_rect[:,0:3] = calib.project_velo_to_rect(point_set[:,0:3])
         pc_rect[:,3] = point_set[:,3]
+        '''
+        # use dense point cloud for image segmentation
+        pc_dense = self.dense_points.load_dense_points(data_idx)
+        choice = np.random.choice(pc_dense.shape[0], self.npoints, replace=True)
+        pc_rect = np.zeros((self.npoints, 4))
+        pc_rect[:,:3] = pc_dense[choice, :]
+        '''
         seg_mask = np.zeros((pc_rect.shape[0]))
         objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
         gt_boxes = [] # ground truth boxes
         # data augmentation
+        # dont use with image now
         if random_rotate and False:
             ry = (np.random.random() - 0.5) * math.radians(20) # -10~10 degrees
             pc_rect[:,0:3] = rotate_points_along_y(pc_rect[:,0:3], ry)
@@ -273,8 +287,9 @@ if __name__ == '__main__':
     import projection
     VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
 
-    dataset = Dataset(16384, kitti_path, split, is_training=True)
-    # dataset = Dataset(16384, kitti_path, split, is_training=False)
+    npoints = 16384
+    # dataset = Dataset(16384, kitti_path, split, is_training=True)
+    dataset = Dataset(npoints, kitti_path, split, is_training=True)
     # dataset.load(True)
     produce_thread = threading.Thread(target=dataset.load, args=(True,))
     produce_thread.start()
@@ -295,13 +310,13 @@ if __name__ == '__main__':
             pts2d = projection.tf_rect_to_image(tf.slice(batch_data['pointcloud'],[0,0,0],[-1,-1,3]), batch_data['calib'])
             pts2d = tf.cast(pts2d, tf.int32) #(B,N,2)
             indices = tf.concat([
-                tf.expand_dims(tf.tile(tf.range(0, 1), [16384]), axis=-1), # (B*N, 1)
-                tf.reshape(pts2d, [1*16384, 2])
+                tf.expand_dims(tf.tile(tf.range(0, 1), [npoints]), axis=-1), # (B*N, 1)
+                tf.reshape(pts2d, [1*npoints, 2])
             ], axis=-1) # (B*N,3)
             indices = tf.gather(indices, [0,2,1], axis=-1) # image's shape is (y,x)
             point_img_feats = tf.reshape(
                 tf.gather_nd(batch_data['images'], indices), # (B*N,C)
-                [1, 16384, -1])  # (B,N,C)
+                [1, npoints, -1])  # (B,N,C)
             res = sess.run(point_img_feats)
             p2d = sess.run(pts2d)
             indices = sess.run(indices)
