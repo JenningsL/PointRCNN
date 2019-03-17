@@ -82,7 +82,7 @@ def get_bn_decay(batch):
     return bn_decay
 
 
-TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True)
+TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True, use_dense=True)
 # data loading threads
 # FIXME: don't use data augmentation with image feature before calib matrix is adjust accordingly
 train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
@@ -161,10 +161,12 @@ def train():
         for epoch in range(MAX_EPOCH):
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
+            if epoch == 0:
+                val_loss = eval_one_epoch(sess, ops, placeholders, test_writer)
             train_one_epoch(sess, ops, placeholders, train_writer)
             save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
             log_string("Model saved in file: {0}".format(save_path))
-            if epoch > 10:
+            if epoch % 2 == 0:
                 val_loss = eval_one_epoch(sess, ops, placeholders, test_writer)
     TRAIN_DATASET.stop_loading()
     train_produce_thread.join()
@@ -240,7 +242,7 @@ def train_one_epoch(sess, ops, pls, train_writer):
 
 
 def eval_one_epoch(sess, ops, pls, test_writer):
-    TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=True)
+    TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=True, use_dense=True)
     test_produce_thread = Thread(target=TEST_DATASET.load, args=(False,))
     test_produce_thread.start()
 

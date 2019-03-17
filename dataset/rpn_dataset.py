@@ -32,12 +32,13 @@ box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RAN
 
 class Dataset(object):
     def __init__(self, npoints, kitti_path, split, is_training, \
-        types=type_whitelist, difficulties=difficulties_whitelist):
+        types=type_whitelist, difficulties=difficulties_whitelist, use_dense=False):
         self.npoints = npoints
         self.kitti_path = kitti_path
         #self.batch_size = batch_size
         self.split = split
         self.is_training = is_training
+        self.use_dense = use_dense
         if split in ['train', 'val']:
             self.kitti_dataset = kitti_object(kitti_path, 'training')
             self.frame_ids = self.load_split_ids(split)
@@ -208,21 +209,22 @@ class Dataset(object):
                     obj.ry = -np.pi - obj.ry
 
         # use original point cloud for rpn
-        _, pc_image_coord, img_fov_inds = get_lidar_in_image_fov(pc_velo[:,0:3],
-            calib, 0, 0, img_width, img_height, True)
-        pc_velo = pc_velo[img_fov_inds, :]
-        choice = np.random.choice(pc_velo.shape[0], self.npoints, replace=True)
-        point_set = pc_velo[choice, :]
-        pc_rect = np.zeros_like(point_set)
-        pc_rect[:,0:3] = calib.project_velo_to_rect(point_set[:,0:3])
-        pc_rect[:,3] = point_set[:,3]
-        '''
-        # use dense point cloud for image segmentation
-        pc_dense = self.dense_points.load_dense_points(data_idx)
-        choice = np.random.choice(pc_dense.shape[0], self.npoints, replace=True)
-        pc_rect = np.zeros((self.npoints, 4))
-        pc_rect[:,:3] = pc_dense[choice, :]
-        '''
+        if not self.use_dense:
+            _, pc_image_coord, img_fov_inds = get_lidar_in_image_fov(pc_velo[:,0:3],
+                calib, 0, 0, img_width, img_height, True)
+            pc_velo = pc_velo[img_fov_inds, :]
+            choice = np.random.choice(pc_velo.shape[0], self.npoints, replace=True)
+            point_set = pc_velo[choice, :]
+            pc_rect = np.zeros_like(point_set)
+            pc_rect[:,0:3] = calib.project_velo_to_rect(point_set[:,0:3])
+            pc_rect[:,3] = point_set[:,3]
+        else:
+            # use dense point cloud for training image segmentation
+            pc_dense = self.dense_points.load_dense_points(data_idx)
+            choice = np.random.choice(pc_dense.shape[0], self.npoints, replace=True)
+            pc_rect = np.zeros((self.npoints, 4))
+            pc_rect[:,:3] = pc_dense[choice, :]
+
         seg_mask = np.zeros((pc_rect.shape[0]))
         objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
         gt_boxes = [] # ground truth boxes
