@@ -224,6 +224,12 @@ class Dataset(object):
         else:
             # use dense point cloud for training image segmentation
             pc_dense = self.dense_points.load_dense_points(data_idx)
+            # get_lidar_in_image_fov
+            pts_2d = calib.project_rect_to_image(pc_dense)
+            fov_inds = (pts_2d[:,0]<img_width) & (pts_2d[:,0]>=0) & \
+                (pts_2d[:,1]<img_height) & (pts_2d[:,1]>=0)
+            # fov_inds = fov_inds & (pc_dense[:,2]>2.0)
+            pc_dense = pc_dense[fov_inds, :]
             obj_mask = {
                 'Car': np.zeros((len(pc_dense),), dtype=np.bool),
                 'Pedestrian': np.zeros((len(pc_dense),), dtype=np.bool),
@@ -326,7 +332,7 @@ if __name__ == '__main__':
     npoints = 200000
     # dataset = Dataset(16384, kitti_path, split, is_training=True)
     dataset = Dataset(npoints, kitti_path, split, is_training=True, train_img_seg=True)
-    dataset.load(True)
+    # dataset.load(True)
     produce_thread = threading.Thread(target=dataset.load, args=(True,))
     produce_thread.start()
     i = 0
@@ -345,6 +351,10 @@ if __name__ == '__main__':
             print(batch_data['calib'])
             pts2d = projection.tf_rect_to_image(tf.slice(batch_data['pointcloud'],[0,0,0],[-1,-1,3]), batch_data['calib'])
             pts2d = tf.cast(pts2d, tf.int32) #(B,N,2)
+            p2d = sess.run(pts2d)
+            print(np.amax(p2d, axis=1))
+            print(np.amin(p2d, axis=1))
+            # break
             indices = tf.concat([
                 tf.expand_dims(tf.tile(tf.range(0, 1), [npoints]), axis=-1), # (B*N, 1)
                 tf.reshape(pts2d, [1*npoints, 2])
@@ -354,9 +364,7 @@ if __name__ == '__main__':
                 tf.gather_nd(batch_data['images'], indices), # (B*N,C)
                 [1, npoints, -1])  # (B,N,C)
             res = sess.run(point_img_feats)
-            p2d = sess.run(pts2d)
             indices = sess.run(indices)
-            print(p2d)
             print(np.sum(indices<0))
             print(batch_data['images'][0,p2d[0][0][1],p2d[0][0][0]])
             # print(res[0][0])

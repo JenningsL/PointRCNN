@@ -38,8 +38,8 @@ class DensePoints(object):
         border = 1
         for v in range(h):
             for u in range(w):
-                if u < border or u >= 1200 - border \
-                    or v < border or v >= 360 - border:
+                if u < border or u >= w - border \
+                    or v < border or v >= h - border:
                     continue
                 z = depth_map[v][u]
                 if z < 0:
