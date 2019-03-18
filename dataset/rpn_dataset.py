@@ -32,13 +32,13 @@ box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RAN
 
 class Dataset(object):
     def __init__(self, npoints, kitti_path, split, is_training, \
-        types=type_whitelist, difficulties=difficulties_whitelist, use_dense=False):
+        types=type_whitelist, difficulties=difficulties_whitelist, train_img_seg=False):
         self.npoints = npoints
         self.kitti_path = kitti_path
         #self.batch_size = batch_size
         self.split = split
         self.is_training = is_training
-        self.use_dense = use_dense
+        self.train_img_seg = train_img_seg
         if split in ['train', 'val']:
             self.kitti_dataset = kitti_object(kitti_path, 'training')
             self.frame_ids = self.load_split_ids(split)
@@ -59,7 +59,7 @@ class Dataset(object):
         self.batch_idx = 0
         # preloading
         self.stop = False
-        self.data_buffer = Queue(maxsize=64)
+        self.data_buffer = Queue(maxsize=256)
 
     def load_split_ids(self, split):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
@@ -71,8 +71,10 @@ class Dataset(object):
             frame_id = self.frame_ids[i]
             #print('loading ' + frame_id)
             for x in range(self.AUG_X):
+                #start = time.time()
                 frame_data = \
                     self.load_frame_data(frame_id, random_flip=aug, random_rotate=aug, random_shift=aug, pca_jitter=aug)
+                #print(time.time() - start)
                 frame_data['frame_id'] = frame_id
                 self.data_buffer.put(frame_data)
             i = (i + 1) % len(self.frame_ids)
@@ -178,7 +180,6 @@ class Dataset(object):
     def load_frame_data(self, data_idx_str,
         random_flip=False, random_rotate=False, random_shift=False, pca_jitter=False):
         '''load one frame'''
-        start = time.time()
         data_idx = int(data_idx_str)
         # print(data_idx_str)
         calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
@@ -186,6 +187,8 @@ class Dataset(object):
             objects = self.kitti_dataset.get_label_objects(data_idx)
         else:
             objects = []
+        objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
+        gt_boxes = [] # ground truth boxes
         image = self.kitti_dataset.get_image(data_idx)
         pc_velo = self.kitti_dataset.get_lidar(data_idx)
         img_height, img_width = image.shape[0:2]
@@ -209,7 +212,7 @@ class Dataset(object):
                     obj.ry = -np.pi - obj.ry
 
         # use original point cloud for rpn
-        if not self.use_dense:
+        if not self.train_img_seg:
             _, pc_image_coord, img_fov_inds = get_lidar_in_image_fov(pc_velo[:,0:3],
                 calib, 0, 0, img_width, img_height, True)
             pc_velo = pc_velo[img_fov_inds, :]
@@ -221,13 +224,38 @@ class Dataset(object):
         else:
             # use dense point cloud for training image segmentation
             pc_dense = self.dense_points.load_dense_points(data_idx)
-            choice = np.random.choice(pc_dense.shape[0], self.npoints, replace=True)
+            obj_mask = {
+                'Car': np.zeros((len(pc_dense),), dtype=np.bool),
+                'Pedestrian': np.zeros((len(pc_dense),), dtype=np.bool),
+                'Cyclist': np.zeros((len(pc_dense),), dtype=np.bool)
+            }
+            for obj in objects:
+                _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
+                _,mask = extract_pc_in_box3d(pc_dense, obj_box_3d)
+                obj_mask[obj.type] = np.logical_or(mask, obj_mask[obj.type])
+            bg_mask = (obj_mask['Car'] + obj_mask['Pedestrian'] + obj_mask['Cyclist']) == 0
+            car = np.where(obj_mask['Car'])[0]
+            # oversampling
+            ped = np.where(obj_mask['Pedestrian'])[0]
+            if ped.shape[0] > 0:
+                #ped = ped[np.random.choice(ped.shape[0], car.shape[0], replace=True)]
+                ped = ped[np.random.choice(ped.shape[0], ped.shape[0]*5, replace=True)]
+            cyc = np.where(obj_mask['Cyclist'])[0]
+            if cyc.shape[0] > 0:
+                #cyc = cyc[np.random.choice(cyc.shape[0], car.shape[0], replace=True)]
+                cyc = cyc[np.random.choice(cyc.shape[0], cyc.shape[0]*10, replace=True)]
+            fg_num = car.shape[0] + ped.shape[0] + cyc.shape[0]
+            #print('total points: ', len(pc_dense))
+            #print('fg_num: {0}, car: {1}, ped: {2}, cyc: {3}'.format(fg_num, car.shape[0], ped.shape[0], cyc.shape[0]))
+            bg = np.where(bg_mask)[0]
+            bg = bg[np.random.choice(bg.shape[0], max(self.npoints-fg_num, 0), replace=True)]
+            choice = np.concatenate((car, ped, cyc, bg), axis=0)[:self.npoints]
+            #choice = np.random.choice(pc_dense.shape[0], self.npoints, replace=True)
             pc_rect = np.zeros((self.npoints, 4))
             pc_rect[:,:3] = pc_dense[choice, :]
 
+        #start = time.time()
         seg_mask = np.zeros((pc_rect.shape[0]))
-        objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
-        gt_boxes = [] # ground truth boxes
         # data augmentation
         # dont use with image now
         if random_rotate and False:
@@ -250,8 +278,8 @@ class Dataset(object):
                 # label without 3d points
                 # print('skip object without points')
                 continue
-            #seg_mask[obj_mask] = g_type2onehotclass[obj.type]
-            seg_mask[obj_mask] = 1
+            seg_mask[obj_mask] = g_type2onehotclass[obj.type]
+            #seg_mask[obj_mask] = 1
             gt_boxes.append(obj_box_3d)
             obj_idxs = np.where(obj_mask)[0]
             # data augmentation
@@ -260,13 +288,18 @@ class Dataset(object):
             if random_shift and False: # jitter object points
                 pc_rect[obj_idxs,:3] = shift_point_cloud(pc_rect[obj_idxs,:3], 0.02)
             for idx in obj_idxs:
-                proposal_of_point[idx] = box_encoder.encode(obj, pc_rect[idx,:3])
+                # to save time
+                if self.train_img_seg:
+                    proposal_of_point[idx] = [0, [0,0,0], 0, 0, 0, [0,0,0]]
+                else:
+                    proposal_of_point[idx] = box_encoder.encode(obj, pc_rect[idx,:3])
                 gt_box_of_point[idx] = obj_box_3d
         # self.viz_frame(pc_rect, seg_mask, gt_boxes)
         # return pc_rect, seg_mask, proposal_of_point, gt_box_of_point, gt_boxes
         calib_matrix = np.copy(calib.P)
         calib_matrix[0,:] *= (1200.0 / image.shape[1])
         calib_matrix[1,:] *= (360.0 / image.shape[0])
+        #print('construct', time.time() - start)
         return {
             'pointcloud': pc_rect,
             'image': cv2.resize(image, (1200, 360)),
@@ -289,10 +322,11 @@ if __name__ == '__main__':
     import projection
     VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
 
-    npoints = 16384
+    #npoints = 16384
+    npoints = 200000
     # dataset = Dataset(16384, kitti_path, split, is_training=True)
-    dataset = Dataset(npoints, kitti_path, split, is_training=True)
-    # dataset.load(True)
+    dataset = Dataset(npoints, kitti_path, split, is_training=True, train_img_seg=True)
+    dataset.load(True)
     produce_thread = threading.Thread(target=dataset.load, args=(True,))
     produce_thread.start()
     i = 0

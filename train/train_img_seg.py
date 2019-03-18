@@ -15,6 +15,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
+from data_conf import g_type2onehotclass
 from rpn_dataset import Dataset
 from model_util import NUM_FG_POINT
 from img_seg_net import ImgSegNet, NUM_SEG_CLASSES
@@ -82,7 +83,7 @@ def get_bn_decay(batch):
     return bn_decay
 
 
-TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True, use_dense=True)
+TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True, train_img_seg=True)
 # data loading threads
 # FIXME: don't use data augmentation with image feature before calib matrix is adjust accordingly
 train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
@@ -161,8 +162,6 @@ def train():
         for epoch in range(MAX_EPOCH):
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
-            if epoch == 0:
-                val_loss = eval_one_epoch(sess, ops, placeholders, test_writer)
             train_one_epoch(sess, ops, placeholders, train_writer)
             save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
             log_string("Model saved in file: {0}".format(save_path))
@@ -182,6 +181,9 @@ def train_one_epoch(sess, ops, pls, train_writer):
     total_tp = 0
     total_fp = 0
     total_fn = 0
+    tp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+    fp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+    fn = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
     loss_sum = 0
     total_nms = 0
 
@@ -206,13 +208,15 @@ def train_one_epoch(sess, ops, pls, train_writer):
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
         correct = np.sum(preds_val == batch_data['seg_label'])
-        tp = np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] != 0))
-        fp = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 0))
-        fn = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != 0))
+        for c in ['Car', 'Pedestrian', 'Cyclist']:
+            one_hot_class = g_type2onehotclass[c]
+            tp[c] += np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] == one_hot_class))
+            fp[c] += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != one_hot_class))
+            fn[c] += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == one_hot_class))
         total_correct += correct
-        total_tp += tp
-        total_fp += fp
-        total_fn += fn
+        total_tp += np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] != 0))
+        total_fp += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 0))
+        total_fn += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != 0))
         total_seen += NUM_POINT * BATCH_SIZE
         loss_sum += loss_val
 
@@ -228,11 +232,21 @@ def train_one_epoch(sess, ops, pls, train_writer):
                     (float(total_tp)/(total_tp+total_fn)))
                 log_string('segmentation precision: %f'% \
                     (float(total_tp)/(total_tp+total_fp)))
+            for c in ['Car', 'Pedestrian', 'Cyclist']:
+                if (tp[c]+fn[c] == 0) or (tp[c]+fp[c]) == 0:
+                    continue
+                log_string(c + ' segmentation recall: %f'% \
+                    (float(tp[c])/(tp[c]+fn[c])))
+                log_string(c + ' segmentation precision: %f'% \
+                    (float(tp[c])/(tp[c]+fp[c])))
             total_correct = 0
             total_seen = 0
             total_tp = 0
             total_fp = 0
             total_fn = 0
+            tp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+            fp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+            fn = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
             loss_sum = 0
             total_nms = 0
         if is_last_batch:
@@ -242,7 +256,7 @@ def train_one_epoch(sess, ops, pls, train_writer):
 
 
 def eval_one_epoch(sess, ops, pls, test_writer):
-    TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=True, use_dense=True)
+    TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=True, train_img_seg=True)
     test_produce_thread = Thread(target=TEST_DATASET.load, args=(False,))
     test_produce_thread.start()
 
@@ -258,6 +272,9 @@ def eval_one_epoch(sess, ops, pls, test_writer):
     total_tp = 0
     total_fp = 0
     total_fn = 0
+    tp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+    fp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+    fn = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
     loss_sum = 0
     num_samples = 0
 
@@ -280,12 +297,14 @@ def eval_one_epoch(sess, ops, pls, test_writer):
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
         correct = np.sum(preds_val == batch_data['seg_label'])
-        tp = np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] != 0))
-        fp = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 0))
-        fn = np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != 0))
-        total_tp += tp
-        total_fp += fp
-        total_fn += fn
+        for c in ['Car', 'Pedestrian', 'Cyclist']:
+            one_hot_class = g_type2onehotclass[c]
+            tp[c] += np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] == one_hot_class))
+            fp[c] += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != one_hot_class))
+            fn[c] += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == one_hot_class))
+        total_tp += np.sum(np.logical_and(preds_val == batch_data['seg_label'], batch_data['seg_label'] != 0))
+        total_fp += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == 0))
+        total_fn += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] != 0))
         total_correct += correct
         total_seen += NUM_POINT * BATCH_SIZE
         loss_sum += loss_val
@@ -301,6 +320,13 @@ def eval_one_epoch(sess, ops, pls, test_writer):
             (float(total_tp)/(total_tp+total_fn)))
         log_string('eval segmentation precision: %f'% \
             (float(total_tp)/(total_tp+total_fp)))
+    for c in ['Car', 'Pedestrian', 'Cyclist']:
+        if (tp[c]+fn[c] == 0) or (tp[c]+fp[c]) == 0:
+            continue
+        log_string(c + 'eval segmentation recall: %f'% \
+            (float(tp[c])/(tp[c]+fn[c])))
+        log_string(c + 'eval segmentation precision: %f'% \
+            (float(tp[c])/(tp[c]+fp[c])))
     EPOCH_CNT += 1
 
     TEST_DATASET.stop_loading()

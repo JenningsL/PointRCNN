@@ -14,7 +14,8 @@ sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 from rpn_dataset import Dataset
-from rpn import NUM_SEG_CLASSES
+#from rpn import NUM_SEG_CLASSES
+NUM_SEG_CLASSES = 4
 import tf_util
 import projection
 from model_util import focal_loss
