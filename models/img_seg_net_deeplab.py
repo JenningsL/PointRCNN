@@ -16,6 +16,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 from rpn_dataset import Dataset
 import tf_util
 import projection
+import time
 
 NUM_HEADING_BIN = 12
 NUM_CENTER_BIN = 12
@@ -49,12 +50,15 @@ class ImgSegNet(object):
         self.graph = tf.get_default_graph()
         self.placeholders = self.get_placeholders()
 
+    def get_semantic_seg(self):
+        return self.graph.get_tensor_by_name('deeplab_v3/SemanticPredictions:0')
+
     def get_seg_softmax(self):
         point_cloud = self.placeholders['pointclouds']
         mask_label = self.placeholders['seg_labels']
         end_points = self.end_points
 
-        img_seg = self.graph.get_tensor_by_name('deeplab_v3/SemanticPredictions:0') # (B,360,1200,1)
+        img_seg = self.graph.get_tensor_by_name('deeplab_v3/SemanticPredictions:0') # (B,360,1200,NUM_CLASSES)
         pts2d = projection.tf_rect_to_image(tf.slice(point_cloud,[0,0,0],[-1,-1,3]), self.placeholders['calib'])
         pts2d = tf.cast(pts2d, tf.int32) #(B,N,2)
         indices = tf.concat([
@@ -62,37 +66,12 @@ class ImgSegNet(object):
             tf.reshape(pts2d, [self.batch_size*self.num_point, 2])
         ], axis=-1) # (B*N,3)
         indices = tf.gather(indices, [0,2,1], axis=-1) # image's shape is (y,x)
-        point_class = tf.reshape(
-            tf.gather_nd(img_seg, indices), # (B*N,1)
-            [self.batch_size, self.num_point, -1])  # (B,N,1)
-        # person 11, rider 12, car 13
-        point_class = tf.to_int32(tf.squeeze(point_class, axis=-1)) # (B,N)
-        point_class = tf.to_int32(tf.equal(point_class, 13)) + tf.to_int32(tf.equal(point_class, 11)) * 2 + tf.to_int32(tf.equal(point_class, 12)) * 3
-        img_seg_softmax = tf.one_hot(point_class, 4, axis=-1)
-        return img_seg_softmax
+        point_softmax = tf.reshape(
+            tf.gather_nd(img_seg, indices), # (B*N,NUM_CLASSES)
+            [self.batch_size, self.num_point, -1])  # (B,N,NUM_CLASSES)
+        return point_softmax
 
 if __name__ == '__main__':
-    '''
-    with open('img_seg.pkl', 'rb') as fin:
-        preds = pickle.load(fin)
-        labels = pickle.load(fin)
-        print(np.sum(preds[0]==13))
-        print(np.sum(labels[0]==1))
-
-        tp = 0
-        fp = 0
-        fn = 0
-        for i in range(100):
-            pred = np.squeeze(preds[i], axis=-1)
-            pred = (pred==13) + (pred==11)*2 + (pred==12)*3
-            correct = np.sum(pred == labels[i])
-            tp += np.sum(np.logical_and(pred == labels[i], labels[i] != 0))
-            fp += np.sum(np.logical_and(pred != labels[i], labels[i] == 0))
-            fn += np.sum(np.logical_and(pred != labels[i], labels[i] != 0))
-        print('recall: {0}, precision: {1}'.format(float(tp)/(tp+fn), float(tp)/(tp+fp)))
-    sys.exit()
-    '''
-
     BATCH_SIZE = 1
     NUM_POINT = 16384
     with tf.Graph().as_default() as graph:
@@ -100,12 +79,14 @@ if __name__ == '__main__':
             seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT)
             seg_net.load_graph(sys.argv[1])
             seg_softmax = seg_net.get_seg_softmax()
+            semantic_seg = seg_net.get_semantic_seg()
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
         config.allow_soft_placement = True
         config.log_device_placement = False
         sess = tf.Session(config=config)
     TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=True)
+    #TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True)
     test_produce_thread = Thread(target=TEST_DATASET.load, args=(False,))
     test_produce_thread.start()
     pls = seg_net.placeholders
@@ -124,12 +105,22 @@ if __name__ == '__main__':
             pls['calib']: batch_data['calib'],
             pls['seg_labels']: batch_data['seg_label']
         }
-        logits_val = sess.run(seg_softmax, feed_dict=feed_dict)
+        start = time.time()
+        logits_val, full_output = sess.run([seg_softmax, semantic_seg], feed_dict=feed_dict)
+        print('infer time:', time.time()-start)
+        print(full_output.shape)
+        # save segmentation logits map
+        for i in range(len(batch_data['ids'])):
+            np.save(os.path.join('./rcnn_data', batch_data['ids'][i]+'_seg.npy'), full_output[i])
+        # (batch_size, num_points, 1)
         preds_val = np.argmax(logits_val, axis=-1)
-        if n ==0:
-            print(preds_val.shape)
-            print(preds_val[0])
-        print('pred: {0}, label: {1}'.format(np.sum(preds_val==1), np.sum(batch_data['seg_label']==1)))
+        '''
+        max_val = np.amax(logits_val, axis=-1)
+        max_val = np.squeeze(max_val, axis=-1)
+        preds_val[max_val<0.99] = 0
+        '''
+        # NOTICE: batch_data['seg_label'] is (batch_size, num_points)
+        #preds_val = np.squeeze(preds_val, axis=-1)
         correct = np.sum(preds_val == batch_data['seg_label'])
         for c in ['Car', 'Pedestrian', 'Cyclist']:
             one_hot_class = g_type2onehotclass[c]
