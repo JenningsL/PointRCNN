@@ -27,8 +27,7 @@ g_type2onehotclass = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
 NUM_HEADING_BIN = 9
 NUM_CENTER_BIN = 6
 CENTER_SEARCH_RANGE = 1.5
-#HEADING_SEARCH_RANGE = 0.25*np.pi
-HEADING_SEARCH_RANGE = 0.5*np.pi
+HEADING_SEARCH_RANGE = 0.25*np.pi
 
 box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
 
@@ -37,7 +36,7 @@ class Dataset(object):
         types=type_whitelist, difficulties=difficulties_whitelist):
         self.npoints = npoints
         self.kitti_path = kitti_path
-        self.proposal_dir = os.path.join(kitti_path, 'training', 'proposal')
+        self.data_dir = os.path.join('./rcnn_data')
         #self.batch_size = batch_size
         self.split = split
         self.is_training = is_training
@@ -50,10 +49,8 @@ class Dataset(object):
                 os.path.join(kitti_path, 'velodyne_points/data'),
                 kitti_path)
             self.frame_ids = range(self.kitti_dataset.num_samples)
-        # random.shuffle(self.frame_ids)
-        # self.frame_ids = self.frame_ids[:1]
+        random.shuffle(self.frame_ids)
         self.num_channel = 6 # xyz intensity is_obj_one_hot
-        self.AUG_X = 1
 
         self.types_list = types
         self.difficulties_list = difficulties
@@ -70,19 +67,17 @@ class Dataset(object):
 
     def load(self, aug=False):
         # load proposals
-        self._load_proposals('rpn_out_{0}.pkl'.format(self.split))
         i = 0
         last_sample_id = None
         while not self.stop:
             frame_id = self.frame_ids[i]
             #print('loading ' + frame_id)
-            for x in range(self.AUG_X):
-                frame_data = {}
-                samples = \
-                    self.load_frame_data(frame_id, aug)
-                for s in samples:
-                    s['frame_id'] = frame_id
-                    self.data_buffer.put(s)
+            frame_data = {}
+            samples = \
+                self.load_frame_data(frame_id, aug)
+            for s in samples:
+                s['frame_id'] = frame_id
+                self.data_buffer.put(s)
             if len(samples) > 0:
                 last_sample_id = samples[-1]['id']
             if i == len(self.frame_ids) - 1:
@@ -103,6 +98,7 @@ class Dataset(object):
             'ids': [],
             'pointcloud': np.zeros((bsize, self.npoints, self.num_channel), dtype=np.float32),
             'images': np.zeros((bsize, 360, 1200, 3), dtype=np.float32),
+            'img_seg_map': np.zeros((bsize, 360, 1200, 4), dtype=np.float32),
             'calib': np.zeros((bsize, 3, 4), dtype=np.float32),
             'label': np.zeros((bsize,), dtype=np.int32),
             'prop_box': np.zeros((bsize, 7), dtype=np.float32),
@@ -128,6 +124,7 @@ class Dataset(object):
             batch['pointcloud'][i,...] = sample['pointcloud'][choice]
             batch['calib'][i,...] = sample['calib']
             batch['images'][i,...] = sample['image']
+            batch['img_seg_map'][i,...] = sample['img_seg_map']
             batch['label'][i] = sample['class']
             batch['prop_box'][i,...] = sample['proposal_box']
             batch['center_x_cls'][i] = sample['center_cls'][0]
@@ -182,8 +179,10 @@ class Dataset(object):
 
         return ProposalObject(np.array([center[0],center[1],center[2],l, h, w, ry]))
 
-    def _load_proposals(self, proposal_path):
-        print('Loading proposals...')
+    def preprocess(self, proposal_path):
+        if not os.path.exists(self.data_dir):
+            os.mkdir(self.data_dir)
+        print('Preprocessing proposals...')
         with open(proposal_path, 'rb') as f:
             frame_ids = pickle.load(f)
             segmentation = pickle.load(f)
@@ -194,42 +193,51 @@ class Dataset(object):
             nms_indices = pickle.load(f)
             scores = pickle.load(f)
             pc_choices = pickle.load(f)
-        self.proposals = {}
-        self.pc_choices = {}
-        self.pc_seg = {}
         for i in range(len(frame_ids)):
-            frame_id = frame_ids[i]
-            self.pc_choices[frame_id] = pc_choices[i]
-            self.pc_seg[frame_id] = segmentation[i]
-            # Do nms on different parameters
-            if self.split == 'train':
-                nms_thres = 0.7
-                max_keep = 100
-            else:
-                nms_thres = 0.8
-                max_keep = 50
-            bev_boxes = []
-            for ry, center, size in zip(angles[i], centers[i], sizes[i]):
-                bev_boxes.append([center[0], center[2], size[0], size[2], 180*ry/np.pi])
-            bev_boxes = np.array(bev_boxes)
-            nms_idx = nms_rotate_cpu(bev_boxes, scores[i], nms_thres, max_keep)
-            for ind in nms_idx:
-                # to ProposalObject
-                x,y,z = centers[i][ind]
-                l, h, w = sizes[i][ind]
-                ry = angles[i][ind]
-                proposal = ProposalObject(np.array([x,y,z,l, h, w, ry]))
-                frame_id = int(frame_ids[i])
-                if frame_id not in self.proposals:
-                    self.proposals[frame_id] = []
-                self.proposals[frame_id].append(proposal)
-        print('Loading proposals done.')
+            print(frame_ids[i])
+            frame_data = {
+                'frame_id': frame_ids[i],
+                'segmentation': segmentation[i],
+                'centers': centers[i],
+                'angles': angles[i],
+                'sizes': sizes[i],
+                'proposal_boxes': proposal_boxes[i],
+                'nms_indices': nms_indices[i],
+                'scores': scores[i],
+                'pc_choices': pc_choices[i]
+            }
+            with open(os.path.join(self.data_dir, frame_ids[i]+'.pkl'), 'wb') as fout:
+                pickle.dump(frame_data, fout)
 
-    def get_proposals(self, data_idx):
-        if data_idx in self.proposals:
-            return self.proposals[data_idx]
+        print('Preprocess proposals done.')
+
+    def get_proposals(self, rpn_out):
+        # Do nms on different parameters
+        '''
+        if self.split == 'train':
+            nms_thres = 0.7
+            max_keep = 100
         else:
-            return []
+            nms_thres = 0.8
+            max_keep = 50
+        bev_boxes = []
+        for ry, center, size in zip(rpn_out['angles'], rpn_out['centers'], rpn_out['sizes']):
+            bev_boxes.append([center[0], center[2], size[0], size[2], 180*ry/np.pi])
+        bev_boxes = np.array(bev_boxes)
+        nms_idx = nms_rotate_cpu(bev_boxes, rpn_out['scores'], nms_thres, max_keep)
+        for ind in nms_idx:
+        '''
+        proposals = []
+        for ind in rpn_out['nms_indices']:
+            if ind == -1:
+                continue
+            # to ProposalObject
+            x,y,z = rpn_out['centers'][ind]
+            l, h, w = rpn_out['sizes'][ind]
+            ry = rpn_out['angles'][ind]
+            proposal = ProposalObject(np.array([x,y,z,l, h, w, ry]))
+            proposals.append(proposal)
+        return proposals
 
     def stat_proposal(self):
         '''statistic of proposals'''
@@ -242,6 +250,12 @@ class Dataset(object):
         total_gt = 0
         for frame_id in self.frame_ids:
             print(frame_id)
+            try:
+                with open(os.path.join(self.data_dir, frame_id+'.pkl'), 'rb') as fin:
+                    rpn_out = pickle.load(fin)
+            except Exception as e:
+                print(e)
+                continue
             data_idx = int(frame_id)
             pc_velo = self.kitti_dataset.get_lidar(data_idx)
             image = self.kitti_dataset.get_image(data_idx)
@@ -255,7 +269,7 @@ class Dataset(object):
             pc_rect[:,3] = pc_velo[:,3]
             objects = self.kitti_dataset.get_label_objects(data_idx)
             objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
-            proposals = self.get_proposals(data_idx)
+            proposals = self.get_proposals(rpn_out)
             gt_boxes = [] # ground truth boxes
             gt_boxes_xy = []
             recall = np.zeros((len(objects),))
@@ -297,7 +311,17 @@ class Dataset(object):
         '''load one frame'''
         start = time.time()
         data_idx = int(data_idx_str)
-        # print(data_idx_str)
+
+        try:
+            with open(os.path.join(self.data_dir, data_idx_str+'.pkl'), 'rb') as fin:
+                rpn_out = pickle.load(fin)
+            # load image segmentation output
+            img_seg_map = np.load(os.path.join(self.data_dir, data_idx_str+'_seg.npy'))
+        except Exception as e:
+            print(e)
+            return []
+        proposals = self.get_proposals(rpn_out)
+        #print(data_idx_str)
         calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
         if self.is_training:
             objects = self.kitti_dataset.get_label_objects(data_idx)
@@ -311,19 +335,18 @@ class Dataset(object):
             calib, 0, 0, img_width, img_height, True)
         pc_velo = pc_velo[img_fov_inds, :]
         # Same point sampling as RPN
-        if data_idx_str not in self.pc_choices:
-            return []
-        choice = self.pc_choices[data_idx_str]
-        point_set = pc_velo[choice, :]
+        # choice = rpn_out['pc_choices']
+        # point_set = pc_velo[choice, :]
+        point_set = pc_velo
         pc_rect = np.zeros_like(point_set)
         pc_rect[:,0:3] = calib.project_velo_to_rect(point_set[:,0:3])
         pc_rect[:,3] = point_set[:,3]
         # Segmentation results from RPN
         seg_one_hot = np.zeros((pc_rect.shape[0], 2))
-        bg_ind = self.pc_seg[data_idx_str] == 0
-        fg_ind = self.pc_seg[data_idx_str] == 1
-        seg_one_hot[bg_ind,0] = 1
-        seg_one_hot[fg_ind,1] = 1
+        # bg_ind = rpn_out['segmentation'] == 0
+        # fg_ind = rpn_out['segmentation'] == 1
+        # seg_one_hot[bg_ind,0] = 1
+        # seg_one_hot[fg_ind,1] = 1
         pc_rect = np.concatenate((pc_rect, seg_one_hot), axis=-1) # 6 channels
         objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
         gt_boxes = [] # ground truth boxes
@@ -337,8 +360,6 @@ class Dataset(object):
                 continue
             gt_boxes.append(obj_box_3d)
             gt_boxes_xy.append(obj_box_3d[:4, [0,2]])
-        # proposals = self.get_proposals_gt(data_idx)
-        proposals = self.get_proposals(data_idx)
         positive_samples = []
         negative_samples = []
         show_boxes = []
@@ -347,7 +368,7 @@ class Dataset(object):
             b2d,prop_box_3d = utils.compute_box_3d(prop, calib.P)
             prop_box_xy = prop_box_3d[:4, [0,2]]
             max_idx, max_iou = find_match_label(prop_box_xy, gt_boxes_xy)
-            sample = self.get_sample(pc_rect, image, calib, prop, max_iou, max_idx, objects)
+            sample = self.get_sample(pc_rect, image, img_seg_map, calib, prop, max_iou, max_idx, objects)
             # print(max_iou)
             if not sample:
                 return -1
@@ -369,9 +390,11 @@ class Dataset(object):
                 prop_ = random_shift_box3d(copy.deepcopy(prop), 0.1)
                 aug_proposals.append(prop_)
         # add more proposals using label to increase training samples
+        '''
         if self.split == 'train':
             miss_objs = [objects[i] for i in range(len(objects)) if recall[i]==0]
             aug_proposals += self.fill_proposals_with_gt(miss_objs)
+        '''
         for prop in aug_proposals:
             process_proposal(prop)
         if self.is_training:
@@ -383,8 +406,8 @@ class Dataset(object):
         # self.viz_frame(pc_rect, np.zeros((pc_rect.shape[0],)), gt_boxes, show_boxes)
         return samples
 
-    def get_sample(self, pc_rect, image, calib, proposal_, max_iou, max_idx, objects):
-        thres_low = 0.45
+    def get_sample(self, pc_rect, image, img_seg_map, calib, proposal_, max_iou, max_idx, objects):
+        thres_low = 0.3
         thres_high = 0.55
         if max_iou >= thres_high:
             label = objects[max_idx]
@@ -394,8 +417,8 @@ class Dataset(object):
             return False
         # expand proposal boxes
         proposal_expand = copy.deepcopy(proposal_)
-        proposal_expand.l += 1
-        proposal_expand.w += 1
+        # proposal_expand.l += 1
+        # proposal_expand.w += 1
         _, box_3d = utils.compute_box_3d(proposal_, calib.P)
         _, mask = extract_pc_in_box3d(pc_rect, box_3d)
         # ignore proposal with no points
@@ -415,6 +438,7 @@ class Dataset(object):
         sample['class'] = 0
         sample['pointcloud'] = points_with_feats
         sample['image'] = cv2.resize(image, (1200, 360))
+        sample['img_seg_map'] = img_seg_map
         sample['calib'] = np.copy(calib.P)
         # scale projection matrix
         sample['calib'][0,:] *= (1200.0 / image.shape[1])
@@ -443,7 +467,7 @@ class Dataset(object):
             sample['size_res'] = obj_vec[5]
             _, gt_box_3d = utils.compute_box_3d(label, calib.P)
             sample['gt_box'] = gt_box_3d
-            # self.viz_sample(sample)
+            #self.viz_sample(sample)
         return sample
 
 if __name__ == '__main__':
@@ -454,6 +478,13 @@ if __name__ == '__main__':
     '''
     dataset = Dataset(512, kitti_path, split, True, ['Car'], [1])
     dataset.stat_proposal()
+    sys.exit()
+    '''
+
+    # preprocess
+    '''
+    dataset = Dataset(512, kitti_path, split, True)
+    dataset.preprocess('rpn_out_{0}.pkl'.format(split))
     sys.exit()
     '''
 
@@ -523,3 +554,4 @@ if __name__ == '__main__':
     dataset.stop_loading()
     print('stop loading')
     produce_thread.join()
+

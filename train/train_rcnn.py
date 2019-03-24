@@ -18,6 +18,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 from rcnn_dataset import Dataset
 import train_util
 from rcnn import RCNN
+from data_conf import g_type2onehotclass
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
@@ -91,7 +92,7 @@ TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', 
 def train():
     ''' Main function for training and simple evaluation. '''
     # data loading threads
-    train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
+    train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(False,))
     train_produce_thread.start()
     test_produce_thread = Thread(target=TEST_DATASET.load, args=(False,))
     test_produce_thread.start()
@@ -130,12 +131,14 @@ def train():
             # Note: when training, the moving_mean and moving_variance need to be updated.
             update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
             with tf.control_dependencies(update_ops):
-                #train_op = optimizer.minimize(loss, global_step=batch)
+                train_op = optimizer.minimize(loss, global_step=batch)
+                '''
                 train_op = slim.learning.create_train_op(
                     loss,
                     optimizer,
                     clip_gradient_norm=1.0,
                     global_step=batch)
+                '''
 
             # Add ops to save and restore all the variables.
             saver = tf.train.Saver()
@@ -209,6 +212,7 @@ def train_one_epoch(sess, ops, pls, train_writer):
         feed_dict = {
             pls['pointclouds']: batch_data['pointcloud'],
             pls['img_inputs']: batch_data['images'],
+            pls['img_seg_map']: batch_data['img_seg_map'],
             pls['calib']: batch_data['calib'],
             pls['proposal_boxes']: batch_data['prop_box'],
             pls['class_labels']: batch_data['label'],
@@ -293,6 +297,8 @@ def eval_one_epoch(sess, ops, pls, test_writer):
     # To collect statistics
     total_correct = 0
     total_seen = 0
+    total_seen_class = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
+    total_correct_class = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
     total_tp = 0
     total_fp = 0
     total_fn = 0
@@ -310,6 +316,7 @@ def eval_one_epoch(sess, ops, pls, test_writer):
         feed_dict = {
             pls['pointclouds']: batch_data['pointcloud'],
             pls['img_inputs']: batch_data['images'],
+            pls['img_seg_map']: batch_data['img_seg_map'],
             pls['calib']: batch_data['calib'],
             pls['proposal_boxes']: batch_data['prop_box'],
             pls['class_labels']: batch_data['label'],
@@ -351,6 +358,10 @@ def eval_one_epoch(sess, ops, pls, test_writer):
         total_fn += fn
         total_seen += BATCH_SIZE
         loss_sum += loss_val
+        for c in ['Car', 'Pedestrian', 'Cyclist']:
+            one_hot_class = g_type2onehotclass[c]
+            total_seen_class[c] += np.sum(batch_data['label']==one_hot_class)
+            total_correct_class[c] += np.sum(np.logical_and(preds_val==one_hot_class, batch_data['label']==one_hot_class))
         if is_last_batch:
             break
         batch_idx += 1
@@ -363,6 +374,11 @@ def eval_one_epoch(sess, ops, pls, test_writer):
         (float(total_tp)/(total_tp+total_fn)))
     log_string('eval classification precision: %f'% \
         (float(total_tp)/(total_tp+total_fp)))
+    for c in ['Car', 'Pedestrian', 'Cyclist']:
+        if total_seen_class[c] == 0:
+            continue
+        print(c + ' classification acc: %f'% \
+            (float(total_correct_class[c])/(total_seen_class[c])))
     log_string('box IoU (ground/3D): %f / %f' % \
         (iou2ds_sum / float(total_pos), iou3ds_sum / float(total_pos)))
     log_string('IoU 3D > 0.7: %f' % (float(total_box_correct) / total_pos))

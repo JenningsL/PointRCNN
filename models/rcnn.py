@@ -19,8 +19,7 @@ from collections import namedtuple
 NUM_HEADING_BIN = 9
 NUM_CENTER_BIN = 6
 CENTER_SEARCH_RANGE = 1.5
-#HEADING_SEARCH_RANGE = 0.25*np.pi
-HEADING_SEARCH_RANGE = 0.5*np.pi
+HEADING_SEARCH_RANGE = 0.25*np.pi
 
 class RCNN(object):
     def __init__(self, batch_size, num_point, num_channel=133, bn_decay=None, is_training=True):
@@ -55,6 +54,7 @@ class RCNN(object):
             'img_inputs': tf.placeholder(tf.float32, shape=(batch_size, 360, 1200, 3)),
             'calib': tf.placeholder(tf.float32, shape=(batch_size, 3, 4)),
             'train_regression': tf.placeholder(tf.bool, shape=(batch_size,)),
+            'img_seg_map': tf.placeholder(tf.float32, shape=(batch_size, 360, 1200, 4)),
             'is_training_pl': tf.placeholder(tf.bool, shape=())
         }
 
@@ -103,6 +103,27 @@ class RCNN(object):
             tf.range(0, batch_size),
             [16,16])
         '''
+        seg_softmax = self.placeholders['img_seg_map']
+        seg_pred = tf.expand_dims(tf.argmax(seg_softmax, axis=-1), axis=-1)
+        self._img_pixel_size = np.asarray([360, 1200])
+        box2d_corners, box2d_corners_norm = projection.tf_project_to_image_space(
+            self.placeholders['proposal_boxes'],
+            self.placeholders['calib'], self._img_pixel_size)
+        # y1, x1, y2, x2
+        box2d_corners_norm_reorder = tf.stack([
+            tf.gather(box2d_corners_norm, 1, axis=-1),
+            tf.gather(box2d_corners_norm, 0, axis=-1),
+            tf.gather(box2d_corners_norm, 3, axis=-1),
+            tf.gather(box2d_corners_norm, 2, axis=-1),
+        ], axis=-1)
+        img_rois = tf.image.crop_and_resize(
+            seg_softmax,
+            #seg_pred,
+            box2d_corners_norm_reorder,
+            tf.range(0, batch_size),
+            [16,16])
+        self.end_points['img_rois'] = img_rois
+        self.end_points['box2d_corners_norm_reorder'] = box2d_corners_norm_reorder
 
         l0_xyz = tf.slice(point_cloud, [0,0,0], [-1,-1,3])
         l0_points = tf.slice(point_cloud, [0,0,3], [-1,-1,self.num_channel-3])
@@ -121,14 +142,15 @@ class RCNN(object):
             scope='rcnn-sa3', bn=True)
 
         point_feats = tf.reshape(l3_points, [batch_size, -1])
-        #img_feats = tf.reshape(img_rois, [batch_size, -1])
-        #feats = tf.concat([point_feats, img_feats], axis=-1)
+        img_feats = tf.reshape(img_rois, [batch_size, -1])
+        feats = tf.concat([point_feats, img_feats], axis=-1)
         #tf.summary.scalar('img_features', tf.reduce_mean(img_feats))
         #tf.summary.scalar('point_features', tf.reduce_mean(point_feats))
 
         # Classification
-        #cls_net = tf_util.fully_connected(img_feats, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
-        cls_net = tf_util.fully_connected(point_feats, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
+        cls_net = tf_util.fully_connected(img_feats, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
+        #cls_net = tf_util.fully_connected(point_feats, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
+        #cls_net = tf_util.fully_connected(feats, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc1', bn_decay=self.bn_decay)
         cls_net = tf_util.dropout(cls_net, keep_prob=0.5, is_training=is_training, scope='rcnn-cls-dp1')
         cls_net = tf_util.fully_connected(cls_net, 256, bn=True, is_training=is_training, scope='rcnn-cls-fc2', bn_decay=self.bn_decay)
         cls_net = tf_util.dropout(cls_net, keep_prob=0.5, is_training=is_training, scope='rcnn-cls-dp2')
