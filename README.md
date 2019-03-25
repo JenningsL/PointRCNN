@@ -1,5 +1,5 @@
 # PointRCNN
-
+Warning: This is **not** the official implementation of PointRCNN, and it is still in progress.
 ## Introduction
 A 3D object detector that takes point cloud and RGB image(optional) as input.
 
