@@ -101,6 +101,7 @@ def test():
         feed_dict = {
             pls['pointclouds']: batch_data['pointcloud'],
             pls['img_inputs']: batch_data['images'],
+            pls['img_seg_map']: batch_data['img_seg_map'],
             pls['calib']: batch_data['calib'],
             pls['proposal_boxes']: batch_data['prop_box'],
             pls['class_labels']: batch_data['label'],
@@ -134,8 +135,8 @@ def test():
             box_corner = corners[i]
             score = box_score[i]
             obj = DetectObject(size[1],size[2],size[0],center[0],center[1],center[2],angle,idx,type_list[cls_val[i]],score)
-            #calib = get_calibration(idx)
-            calib = batch_data['calib'][i]
+            # dont't use batch_data['calib'] which is for resized image
+            calib = get_calibration(idx).P
             box3d_pts_2d, box3d_pts_3d = utils.compute_box_3d(obj, calib)
             if box3d_pts_2d is None:
                 print('box3d_pts_2d is None')
