@@ -15,6 +15,7 @@ from frustum_model_util import NUM_HEADING_BIN, NUM_SIZE_CLUSTER, NUM_OBJECT_POI
 from frustum_model_util import NUM_SEG_CLASSES, NUM_OBJ_CLASSES, NUM_CHANNEL
 from frustum_model_util import point_cloud_masking, get_center_regression_net
 from frustum_model_util import placeholder_inputs, parse_output_to_tensors, get_loss
+import projection
 
 def get_instance_seg_v2_net(point_cloud, feature_vec, cls_label,
                             is_training, bn_decay, end_points):
@@ -51,13 +52,17 @@ def get_instance_seg_v2_net(point_cloud, feature_vec, cls_label,
 
     # classification
     batch_size = feature_vec.shape[0]
-    #print('batch size:', batch_size)
-    cls_net = tf.reshape(l3_points, [batch_size, -1])
-    # cls_net = tf.concat([cls_net, feature_vec], axis=1)
+    point_feats = tf.reshape(l3_points, [batch_size, -1])
+    # use image only
+    #cls_net = feature_vec
+    # use point and image feature
+    cls_net = tf.concat([point_feats, feature_vec], axis=1)
+    # use point only
+    #cls_net = point_feats
     cls_net = tf_util.fully_connected(cls_net, 512, bn=True, is_training=is_training, scope='cls_fc1', bn_decay=bn_decay)
-    #cls_net = tf_util.dropout(cls_net, keep_prob=0.4, is_training=is_training, scope='cls_dp1')
+    cls_net = tf_util.dropout(cls_net, keep_prob=0.5, is_training=is_training, scope='cls_dp1')
     cls_net = tf_util.fully_connected(cls_net, 256, bn=True, is_training=is_training, scope='cls_fc2', bn_decay=bn_decay)
-    #cls_net = tf_util.dropout(cls_net, keep_prob=0.4, is_training=is_training, scope='cls_dp2')
+    cls_net = tf_util.dropout(cls_net, keep_prob=0.5, is_training=is_training, scope='cls_dp2')
     cls_net = tf_util.fully_connected(cls_net, NUM_OBJ_CLASSES, activation_fn=None, scope='cls_logits')
     end_points['cls_logits'] = cls_net
 
@@ -142,7 +147,7 @@ def get_3d_box_estimation_v2_net(object_point_cloud, one_hot_vec, feature_vec,
     return output, end_points
 
 
-def get_model(point_cloud, cls_label, feature_vec, is_training, bn_decay=None):
+def get_model(point_cloud, cls_label, img_seg_map, proposal_boxes, calib, is_training, bn_decay=None):
     ''' Frustum PointNets model. The model predict 3D object masks and
     amodel bounding boxes for objects in frustum point clouds.
 
@@ -158,10 +163,32 @@ def get_model(point_cloud, cls_label, feature_vec, is_training, bn_decay=None):
         end_points: dict (map from name strings to TF tensors)
     '''
     end_points = {}
+    batch_size = point_cloud.get_shape()[0]
+
+    seg_softmax = img_seg_map
+    #seg_pred = tf.expand_dims(tf.argmax(seg_softmax, axis=-1), axis=-1)
+    _img_pixel_size = np.asarray([360, 1200])
+    box2d_corners, box2d_corners_norm = projection.tf_project_to_image_space(
+        proposal_boxes,
+        calib, _img_pixel_size)
+    # y1, x1, y2, x2
+    box2d_corners_norm_reorder = tf.stack([
+        tf.gather(box2d_corners_norm, 1, axis=-1),
+        tf.gather(box2d_corners_norm, 0, axis=-1),
+        tf.gather(box2d_corners_norm, 3, axis=-1),
+        tf.gather(box2d_corners_norm, 2, axis=-1),
+    ], axis=-1)
+    img_rois = tf.image.crop_and_resize(
+        seg_softmax,
+        #seg_pred,
+        box2d_corners_norm_reorder,
+        tf.range(0, batch_size),
+        [16,16])
+    img_feats = tf.reshape(img_rois, [batch_size, -1])
 
     # 3D Instance Segmentation PointNet
     logits, end_points = get_instance_seg_v2_net(\
-        point_cloud, feature_vec, cls_label,
+        point_cloud, img_feats, cls_label,
         is_training, bn_decay, end_points)
     end_points['mask_logits'] = logits
 
@@ -184,7 +211,7 @@ def get_model(point_cloud, cls_label, feature_vec, is_training, bn_decay=None):
     object_point_cloud_new = tf.concat([object_point_cloud_xyz_new, object_point_cloud_features], axis=-1)
     # Amodel Box Estimation PointNet
     output, end_points = get_3d_box_estimation_v2_net(\
-        object_point_cloud_new, end_points['one_hot_gt'], feature_vec,
+        object_point_cloud_new, end_points['one_hot_gt'], img_rois,
         is_training, bn_decay, end_points)
 
     # Parse output to 3D box parameters

@@ -17,7 +17,7 @@ NUM_OBJ_CLASSES = 4 # classification
 NUM_HEADING_BIN = 12
 #NUM_SIZE_CLUSTER = 9 # one cluster for each type
 NUM_OBJECT_POINT = 512
-NUM_CHANNEL = 7
+NUM_CHANNEL = 4
 REG_IOU = 0.55
 type_whitelist = ['Car', 'Pedestrian', 'Cyclist', 'NonObject']
 # type_whitelist = ['Car', 'NonObject']
@@ -25,10 +25,10 @@ type_whitelist = ['Car', 'Pedestrian', 'Cyclist', 'NonObject']
 g_type2class={'Car':0, 'Van':1, 'Truck':2, 'Pedestrian':3,
               'Person_sitting':4, 'Cyclist':5, 'Tram':6, 'Misc':7, 'NonObject': 8}
 '''
-g_type2class = {'Car': 0, 'Pedestrian': 1, 'Cyclist': 2, 'NonObject': 3}
+g_type2class = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
 # g_type2class={'Car':0, 'NonObject': 1}
 g_class2type = {g_type2class[t]:t for t in g_type2class}
-g_type2onehotclass = {'Car': 0, 'Pedestrian': 1, 'Cyclist': 2, 'NonObject': 3}
+g_type2onehotclass = {'NonObject': 0, 'Car': 1, 'Pedestrian': 2, 'Cyclist': 3}
 # g_type2onehotclass = {'Car': 0, 'NonObject': 1}
 # g_type_mean_size = {'Car': np.array([3.88311640418,1.62856739989,1.52563191462]),
 #                     'Van': np.array([5.06763659,1.9007158,2.20532825]),
@@ -39,10 +39,10 @@ g_type2onehotclass = {'Car': 0, 'Pedestrian': 1, 'Cyclist': 2, 'NonObject': 3}
 #                     'Tram': np.array([16.17150617,2.53246914,3.53079012]),
 #                     'Misc': np.array([3.64300781,1.54298177,1.92320313]),
 #                     'NonObject': np.array([1.0, 1.0, 1.0])}
-g_type_mean_size = {'Car': np.array([3.88311640418,1.62856739989,1.52563191462]),
+g_type_mean_size = {'NonObject': np.array([1.0, 1.0, 1.0]),
+                    'Car': np.array([3.88311640418,1.62856739989,1.52563191462]),
                     'Pedestrian': np.array([0.84422524,0.66068622,1.76255119]),
-                    'Cyclist': np.array([1.76282397,0.59706367,1.73698127]),
-                    'NonObject': np.array([1.0, 1.0, 1.0])}
+                    'Cyclist': np.array([1.76282397,0.59706367,1.73698127])}
 '''
 g_type_mean_size = {'Car': np.array([3.88311640418,1.62856739989,1.52563191462]), 'NonObject': np.array([1.0, 1.0, 1.0])}
 '''
@@ -225,7 +225,9 @@ def placeholder_inputs(batch_size, num_point):
     '''
     pointclouds_pl = tf.placeholder(tf.float32,
         shape=(batch_size, num_point, NUM_CHANNEL))
-    features_pl = tf.placeholder(tf.float32, shape=(batch_size, 3136)) # TODO: don't hardcode feature_vector size
+    img_seg_pl = tf.placeholder(tf.float32, shape=(batch_size, 360, 1200, 4)) # TODO: don't hardcode feature_vector size
+    prop_box_pl = tf.placeholder(tf.float32, shape=(batch_size, 7))
+    calib_pl = tf.placeholder(tf.float32, shape=(batch_size, 3, 4))
     cls_label_pl = tf.placeholder(tf.int32, shape=(batch_size,))
     ious_pl = tf.placeholder(tf.float32, shape=(batch_size,))
 
@@ -237,7 +239,7 @@ def placeholder_inputs(batch_size, num_point):
     size_class_label_pl = tf.placeholder(tf.int32, shape=(batch_size,))
     size_residual_label_pl = tf.placeholder(tf.float32, shape=(batch_size,3))
 
-    return pointclouds_pl, features_pl, cls_label_pl, ious_pl, seg_labels_pl, centers_pl, \
+    return pointclouds_pl, img_seg_pl, prop_box_pl, calib_pl, cls_label_pl, ious_pl, seg_labels_pl, centers_pl, \
         heading_class_label_pl, heading_residual_label_pl, \
         size_class_label_pl, size_residual_label_pl
 

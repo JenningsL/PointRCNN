@@ -13,7 +13,8 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'kitti'))
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'mayavi'))
-from data_util import extract_pc_in_box3d
+sys.path.append(os.path.join(ROOT_DIR, 'utils'))
+from data_util import extract_pc_in_box3d, ProposalObject
 from kitti_object import *
 import kitti_util as utils
 from frustum_model_util import g_type2class, g_class2type, g_type2onehotclass, g_type_mean_size
@@ -23,6 +24,7 @@ from provider import *
 from shapely.geometry import Polygon, MultiPolygon
 from Queue import Queue
 from sklearn.neighbors import KDTree
+
 
 def random_shift_box3d(obj, shift_ratio=0.1):
     '''
@@ -50,7 +52,7 @@ def get_iou(bev_box1, bev_box2):
 
 class Sample(object):
     def __init__(self, idx, point_set, seg, box3d_center, angle_class, angle_residual,\
-        size_class, size_residual, rot_angle, cls_label, proposal, heading_angle, iou):
+        size_class, size_residual, rot_angle, cls_label, proposal, heading_angle, iou, img_seg_map, calib):
         self.idx = idx
         self.heading_angle = heading_angle
         self.point_set = point_set
@@ -62,7 +64,10 @@ class Sample(object):
         self.size_residual = size_residual
         self.rot_angle = rot_angle
         self.cls_label = cls_label
-        # self.feature_vec = proposal.roi_features
+        self.img_seg_map = img_seg_map
+        self.prop_box = np.array([proposal.t[0], proposal.t[1], proposal.t[2],
+            proposal.l, proposal.h, proposal.w, proposal.ry])
+        self.calib = calib
         # corresponding proposal without roi features
         prop_box = [proposal.t[0], proposal.t[1], proposal.t[2], proposal.l, proposal.h, proposal.w, proposal.ry]
         self.proposal = ProposalObject(prop_box, proposal.score, proposal.type)
@@ -96,11 +101,13 @@ class FrustumDataset(object):
         self.kitti_path = kitti_path
         self.kitti_dataset = kitti_object(kitti_path, 'training')
         self.save_dir = save_dir
+        self.data_dir = os.path.join('./rcnn_data')
         self.split = split
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         self.fill_with_label = fill_with_label
-        self.num_channel = 7
+        #self.num_channel = 7
+        self.num_channel = 4
         # rpn_output_path = os.path.join(kitti_path, 'training/proposal_car_people')
         # def is_prop_file(f):
         #     return os.path.isfile(os.path.join(rpn_output_path, f)) and not '_roi' in f
@@ -246,7 +253,7 @@ class FrustumDataset(object):
             if self.random_shift:
                 sample.random_shift()
 
-        print('Sampling result: pos {}, neg {}'.format(p, n))
+        #print('Sampling result: pos {}, neg {}'.format(p, n))
         return kept_samples
 
     def stop_loading(self):
@@ -296,15 +303,17 @@ class FrustumDataset(object):
         batch_size_class = np.zeros((bsize,), dtype=np.int32)
         batch_size_residual = np.zeros((bsize, 3))
         batch_rot_angle = np.zeros((bsize,))
-        #batch_feature_vec = np.zeros((bsize, samples[0].feature_vec.shape[0]))
-        batch_feature_vec = np.zeros((bsize, 3136))
+        batch_img_seg_map = np.zeros((bsize, 360, 1200, 4), dtype=np.float32)
+        batch_prop_box = np.zeros((bsize, 7), dtype=np.float32)
+        batch_calib = np.zeros((bsize, 3, 4), dtype=np.float32)
+        #batch_feature_vec = np.zeros((bsize, 3136))
         frame_ids = []
         batch_proposal_score = np.zeros((bsize,), dtype=np.float32)
         for i in range(bsize):
             sample = samples[i]
             assert(sample.point_set.shape[0] == sample.seg_label.shape[0])
             if sample.point_set.shape[0] == 0:
-                point_set = np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+                point_set = np.array([[0.0, 0.0, 0.0, 0.0]])
                 seg_label = np.array([0])
             else:
                 # Resample
@@ -328,13 +337,15 @@ class FrustumDataset(object):
             batch_size_class[i] = sample.size_class
             batch_size_residual[i] = sample.size_residual
             batch_rot_angle[i] = sample.rot_angle
-            # batch_feature_vec[i] = sample.feature_vec
+            batch_img_seg_map[i] = sample.img_seg_map
             frame_ids.append(sample.frame_id)
             batch_proposal_score[i] = sample.proposal.score
+            batch_prop_box[i] = sample.prop_box
+            batch_calib[i] = sample.calib
         return batch_data, batch_cls_label, batch_ious, batch_label, batch_center, \
             batch_heading_class, batch_heading_residual, \
             batch_size_class, batch_size_residual, \
-            batch_rot_angle, batch_feature_vec, frame_ids, batch_proposal_score, is_last_batch
+            batch_rot_angle, batch_img_seg_map, batch_prop_box, batch_calib, frame_ids, batch_proposal_score, is_last_batch
 
     def get_center_view_rot_angle(self, frustum_angle):
         ''' Get the frustum rotation angle, it isshifted by pi/2 so that it
@@ -396,7 +407,7 @@ class FrustumDataset(object):
         return keypoints
 
 
-    def get_one_sample(self, proposal, pc_rect, image, calib, iou, gt_box_3d, gt_object, data_idx_str):
+    def get_one_sample(self, proposal, pc_rect, image, calib, iou, gt_box_3d, gt_object, data_idx_str, img_seg_map):
         '''convert to frustum sample format'''
         prop_corners_image_2d, prop_corners_3d = utils.compute_box_3d(proposal, calib.P)
         if prop_corners_image_2d is None:
@@ -406,6 +417,9 @@ class FrustumDataset(object):
         _,prop_inds = extract_pc_in_box3d(pc_rect, prop_corners_3d)
         pc_in_prop_box = pc_rect[prop_inds,:]
         seg_mask = np.zeros((pc_in_prop_box.shape[0]))
+        if len(pc_in_prop_box) == 0:
+            print('Reject proposal with no point')
+            return False
 
         # Get frustum angle
         image_points = calib.project_rect_to_image(pc_in_prop_box[:,:3])
@@ -431,10 +445,10 @@ class FrustumDataset(object):
             #_,gt_inds = extract_pc_in_box3d(pc_rect, gt_box_3d)
             #prop_inds = np.logical_or(prop_inds, gt_inds)
 
-            _,inds = extract_pc_in_box3d(expanded_points, gt_box_3d)
+            _,inds = extract_pc_in_box3d(pc_in_prop_box, gt_box_3d)
             seg_mask[inds] = 1
-            # Reject object without points
-            if np.sum(seg_mask)==0 or len(expanded_points) < 5:
+            # Reject object with too few point
+            if np.sum(seg_mask) < 5:
                 print('Reject object with too few point')
                 return False
 
@@ -449,39 +463,13 @@ class FrustumDataset(object):
             box3d_size = np.zeros((1, 3))
             #frustum_angle = 0
 
-        # show the expand_points
-        # if expanded_points.shape[0] > pc_in_prop_box.shape[0] and obj_type == 'NonObject':
-        #     box2d_center_rect = [[0,0,0]]
-        #     self.visualize_one_sample(pc_in_prop_box, expanded_points, gt_box_3d, prop_corners_3d, box2d_center_rect)
-        #############
         rot_angle = self.get_center_view_rot_angle(frustum_angle)
 
-        ### RGB
-        point_set_rgb = np.zeros((expanded_points.shape[0], expanded_points.shape[1]+3))
-        image_points = calib.project_rect_to_image(expanded_points[:,:3])
-        for i, pt in enumerate(image_points):
-            x, y = pt
-            if x < 0 or x >= image.shape[1] or y < 0 or y >= image.shape[0]:
-                rgb = np.array([0.0,0.0,0.0])
-            else:
-                rgb = image[int(y)][int(x)].astype(np.float32) / 255
-            point_set_rgb[i] = np.concatenate((expanded_points[i], rgb), axis=0)
         # Get point cloud
         if self.rotate_to_center:
-            point_set = self.get_center_view_point_set(point_set_rgb, rot_angle)
+            point_set = self.get_center_view_point_set(pc_in_prop_box, rot_angle)
         else:
-            point_set = point_set_rgb
-
-        # if obj_type == 'Pedestrian':
-        #     img_show = np.zeros(image.shape)
-        #     image_points = calib.project_rect_to_image(point_set[:,:3])
-        #     for i, pt in enumerate(image_points):
-        #         x, y = pt
-        #         if x < 0 or x >= image.shape[1] or y < 0 or y >= image.shape[0]:
-        #             continue
-        #         img_show[int(y)][int(x)] = point_set[i, 4:]
-        #     cv2.imshow('image',img_show)
-        #     cv2.waitKey(0)
+            point_set = pc_in_prop_box
 
         # ------------------------------ LABELS ----------------------------
         # classification
@@ -507,7 +495,7 @@ class FrustumDataset(object):
 
         self.sample_id_counter += 1
         return Sample(self.sample_id_counter, point_set, seg_mask, box3d_center, angle_class, angle_residual,\
-            size_class, size_residual, rot_angle, cls_label, proposal, heading_angle, iou)
+            size_class, size_residual, rot_angle, cls_label, proposal, heading_angle, iou, img_seg_map, calib.P)
 
     def visualize_one_sample(self, old_points, expand_points, gt_box_3d, prop_box_3d, box2d_center_rect):
         import mayavi.mlab as mlab
@@ -532,7 +520,7 @@ class FrustumDataset(object):
         mlab.plot3d([0, box2d_center_rect[0][0]], [0, box2d_center_rect[0][1]], [0, box2d_center_rect[0][2]], color=(1,1,1), tube_radius=None, figure=fig)
         raw_input()
 
-    def get_proposal_from_label(self, label, calib, roi_features):
+    def get_proposal_from_label(self, label, calib):
         '''construct proposal from label'''
         _, corners_3d = utils.compute_box_3d(label, calib.P)
         bev_box = corners_3d[:4, [0,2]]
@@ -549,7 +537,7 @@ class FrustumDataset(object):
         l = box_w * cos_ry + box_l * sin_ry
         h = box_h
 
-        prop_obj = ProposalObject(list(label.t) + [l, h, w, box_ry], 1, label.type, roi_features)
+        prop_obj = ProposalObject(list(label.t) + [l, h, w, box_ry], 1, label.type, None)
         _, corners_prop = utils.compute_box_3d(prop_obj, calib.P)
         bev_box_prop = corners_prop[:4, [0,2]]
 
@@ -583,7 +571,7 @@ class FrustumDataset(object):
             img_seg_map = np.load(os.path.join(self.data_dir, data_idx_str+'_seg.npy'))
         except Exception as e:
             print(e)
-            return []
+            return {'samples': [], 'pos_idxs': []}
         calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
         objects = self.kitti_dataset.get_label_objects(data_idx)
         proposals = self.get_proposals(rpn_out)
@@ -594,9 +582,9 @@ class FrustumDataset(object):
             calib, 0, 0, img_width, img_height, True)
         pc_velo = pc_velo[img_fov_inds, :]
         # Same point sampling as RPN
-        choice = self.pc_choices[data_idx_str]
+        #choice = rpn_out['pc_choices']
         # print('choice', len(choice))
-        pc_velo = pc_velo[choice, :]
+        #pc_velo = pc_velo[choice, :]
 
         pc_rect = np.zeros_like(pc_velo)
         pc_rect[:,0:3] = calib.project_velo_to_rect(pc_velo[:,0:3])
@@ -637,7 +625,7 @@ class FrustumDataset(object):
             # train regression
             if iou_with_gt < 0.3:
                 # non-object
-                sample = self.get_one_sample(prop, pc_rect, image, calib, iou_with_gt, None, None, data_idx_str)
+                sample = self.get_one_sample(prop, pc_rect, image, calib, iou_with_gt, None, None, data_idx_str, img_seg_map)
                 if sample:
                     samples.append(sample)
                     neg_box.append(prop_corners_3d)
@@ -658,7 +646,7 @@ class FrustumDataset(object):
                 #####
                 avg_iou.append(iou_with_gt)
 
-                sample = self.get_one_sample(prop, pc_rect, image, calib, iou_with_gt, gt_boxes_3d[obj_idx], objects[obj_idx], data_idx_str)
+                sample = self.get_one_sample(prop, pc_rect, image, calib, iou_with_gt, gt_boxes_3d[obj_idx], objects[obj_idx], data_idx_str, img_seg_map)
                 if sample:
                     pos_idxs.append(len(samples))
                     samples.append(sample)
@@ -673,17 +661,13 @@ class FrustumDataset(object):
             for i in range(len(objects)):
                 if recall[i]:
                     continue
-                # FIXME: use roi feature of the first found positive proposal now
-                fake_roi_feature = self.roi_feature_.get(objects[i].type)
-                if fake_roi_feature is None:
-                    continue
-                gt_prop, iou_with_gt = self.get_proposal_from_label(objects[i], calib, fake_roi_feature)
+                gt_prop, iou_with_gt = self.get_proposal_from_label(objects[i], calib)
 
                 for _ in range(self.augmentX):
                     prop = copy.deepcopy(gt_prop)
                     # if self.perturb_prop:
                     prop = random_shift_box3d(prop)
-                    sample = self.get_one_sample(prop, pc_rect, image, calib, iou_with_gt, gt_boxes_3d[i], objects[i], data_idx_str)
+                    sample = self.get_one_sample(prop, pc_rect, image, calib, iou_with_gt, gt_boxes_3d[i], objects[i], data_idx_str, img_seg_map)
                     if sample:
                         pos_idxs.append(len(samples))
                         samples.append(sample)
@@ -693,7 +677,7 @@ class FrustumDataset(object):
 
         # self.visualize_proposals(pc_rect, pos_box, neg_box, gt_boxes_3d, self.pc_seg[data_idx_str])
         self.load_progress += 1
-        print('load {} samples, pos {}'.format(len(samples), len(pos_idxs)))
+        #print('load {} samples, pos {}'.format(len(samples), len(pos_idxs)))
         ret = {'samples': samples, 'pos_idxs': pos_idxs}
         if len(objects) > 0:
             ret['recall'] = np.sum(recall)/len(objects)
@@ -739,7 +723,8 @@ if __name__ == '__main__':
     dataset = FrustumDataset(512, kitti_path, 16, split, save_dir='./dataset_car_people/'+split,
                  augmentX=augmentX, random_shift=False, rotate_to_center=True, random_flip=False,
                  perturb_prop=perturb_prop, fill_with_label=fill_with_label)
-    dataset.preprocess()
+    #dataset.preprocess()
+    dataset.load_buffer_repeatedly(0.5)
     '''
     produce_thread = threading.Thread(target=dataset.load_buffer_repeatedly, args=(1.0,))
     produce_thread.start()

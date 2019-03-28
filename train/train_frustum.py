@@ -19,6 +19,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
+sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 from frustum_model_util import NUM_SEG_CLASSES, NUM_OBJ_CLASSES, g_type2onehotclass, NUM_CHANNEL
 from frustum_dataset import FrustumDataset, Sample
 import provider
@@ -37,7 +38,6 @@ parser.add_argument('--decay_step', type=int, default=200000, help='Decay step f
 parser.add_argument('--decay_rate', type=float, default=0.7, help='Decay rate for lr decay [default: 0.7]')
 parser.add_argument('--no_intensity', action='store_true', help='Only use XYZ for training')
 parser.add_argument('--restore_model_path', default=None, help='Restore model path e.g. log/model.ckpt [default: None]')
-parser.add_argument('--hard_sample_mining', default=False, help='If train only with classification hard samples')
 parser.add_argument('--pos_ratio', type=float, default=0.5, help='Positive proposal ratio')
 parser.add_argument('--train_cls_only', type=int, default=0, help='Train classification only')
 parser.add_argument('--train_reg_only', type=int, default=0, help='Train box regression only')
@@ -73,10 +73,10 @@ BN_DECAY_CLIP = 0.99
 # load data set in background thread, remember to join data_loading_thread somewhere
 TRAIN_DATASET = FrustumDataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', BATCH_SIZE, 'train',
              save_dir='/data/ssd/public/jlliu/frustum-pointnets/train/rpn_dataset_car_people/train',
-             augmentX=1, random_shift=True, rotate_to_center=True, random_flip=True)
+             augmentX=5, random_shift=True, rotate_to_center=True, random_flip=True, fill_with_label=True)
 TEST_DATASET = FrustumDataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', BATCH_SIZE, 'val',
              save_dir='/data/ssd/public/jlliu/frustum-pointnets/train/rpn_dataset_car_people/val',
-             augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False)
+             augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, fill_with_label=False)
 train_loading_thread = Thread(target=TRAIN_DATASET.load_buffer_repeatedly, args=(FLAGS.pos_ratio, False))
 val_loading_thread = Thread(target=TEST_DATASET.load_buffer_repeatedly, args=(FLAGS.pos_ratio, True))
 train_loading_thread.start()
@@ -107,73 +107,13 @@ def get_bn_decay(batch):
     bn_decay = tf.minimum(BN_DECAY_CLIP, 1 - bn_momentum)
     return bn_decay
 
-def get_batch(dataset, idxs, start_idx, end_idx,
-              num_point, num_channel,
-              from_rgb_detection=False):
-    ''' Prepare batch data for training/evaluation.
-    batch size is determined by start_idx-end_idx
-
-    Input:
-        dataset: an instance of FrustumDataset class
-        idxs: a list of data element indices
-        start_idx: int scalar, start position in idxs
-        end_idx: int scalar, end position in idxs
-        num_point: int scalar
-        num_channel: int scalar
-        from_rgb_detection: bool
-    Output:
-        batched data and label
-    '''
-    if from_rgb_detection:
-        return get_batch_from_rgb_detection(dataset, idxs, start_idx, end_idx,
-            num_point, num_channel)
-
-    bsize = end_idx-start_idx
-    batch_data = np.zeros((bsize, num_point, num_channel))
-    batch_cls_label = np.zeros((bsize,), dtype=np.int32)
-    batch_label = np.zeros((bsize, num_point), dtype=np.int32)
-    batch_center = np.zeros((bsize, 3))
-    batch_heading_class = np.zeros((bsize,), dtype=np.int32)
-    batch_heading_residual = np.zeros((bsize,))
-    batch_size_class = np.zeros((bsize,), dtype=np.int32)
-    batch_size_residual = np.zeros((bsize, 3))
-    batch_rot_angle = np.zeros((bsize,))
-    if dataset.extra_feature:
-        batch_feature_vec = np.zeros((bsize, len(dataset[0][-1])))
-    for i in range(bsize):
-        if dataset.extra_feature:
-            ps,seg,center,hclass,hres,sclass,sres,rotangle,cls_label,feature_vec = \
-                dataset[idxs[i+start_idx]]
-            batch_feature_vec[i] = feature_vec
-        else:
-            ps,seg,center,hclass,hres,sclass,sres,rotangle,cls_label = \
-                dataset[idxs[i+start_idx]]
-        batch_data[i,...] = ps[:,0:num_channel]
-        batch_cls_label[i] = cls_label
-        batch_label[i,:] = seg
-        batch_center[i,:] = center
-        batch_heading_class[i] = hclass
-        batch_heading_residual[i] = hres
-        batch_size_class[i] = sclass
-        batch_size_residual[i] = sres
-        batch_rot_angle[i] = rotangle
-    if dataset.extra_feature:
-        return batch_data, batch_cls_label, batch_label, batch_center, \
-            batch_heading_class, batch_heading_residual, \
-            batch_size_class, batch_size_residual, \
-            batch_rot_angle, batch_feature_vec
-    else:
-        return batch_data, batch_cls_label, batch_label, batch_center, \
-            batch_heading_class, batch_heading_residual, \
-            batch_size_class, batch_size_residual, batch_rot_angle
-
 def train():
     ''' Main function for training and simple evaluation. '''
     best_val_loss = float('inf')
     best_avg_cls_acc = 0
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            pointclouds_pl, features_pl, cls_labels_pl, ious_pl, labels_pl, centers_pl, \
+            pointclouds_pl, img_seg_map_pl, prop_box_pl, calib_pl, cls_labels_pl, ious_pl, labels_pl, centers_pl, \
             heading_class_label_pl, heading_residual_label_pl, \
             size_class_label_pl, size_residual_label_pl = \
                 MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
@@ -189,8 +129,8 @@ def train():
             tf.summary.scalar('bn_decay', bn_decay)
 
             # Get model and losses
-            end_points = MODEL.get_model(pointclouds_pl, cls_labels_pl, features_pl,
-                is_training_pl, bn_decay=bn_decay)
+            end_points = MODEL.get_model(pointclouds_pl, cls_labels_pl, img_seg_map_pl,
+                prop_box_pl, calib_pl, is_training_pl, bn_decay=bn_decay)
             loss, loss_endpoints = MODEL.get_loss(cls_labels_pl, ious_pl, labels_pl, centers_pl,
                 heading_class_label_pl, heading_residual_label_pl,
                 size_class_label_pl, size_residual_label_pl, end_points)
@@ -265,7 +205,9 @@ def train():
             saver.restore(sess, FLAGS.restore_model_path)
 
         ops = {'pointclouds_pl': pointclouds_pl,
-               'features_pl': features_pl,
+               'img_seg_map_pl': img_seg_map_pl,
+               'prop_box_pl': prop_box_pl,
+               'calib_pl': calib_pl,
                'cls_label_pl': cls_labels_pl,
                'ious_pl': ious_pl,
                'labels_pl': labels_pl,
@@ -289,65 +231,18 @@ def train():
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
 
-            if FLAGS.hard_sample_mining:
-                if FLAGS.restore_model_path is None:
-                    raise Exception('must provide restore_model_path with hard_sample_mining')
-                if epoch == 0:
-                    _, best_avg_cls_acc, _ = eval_one_epoch(sess, ops, test_writer)
-                hard_neg_idxs = get_hard_samples(sess, ops)
-                train_one_epoch(sess, ops, train_writer, hard_neg_idxs)
-                val_loss, avg_cls_acc, _ = eval_one_epoch(sess, ops, test_writer)
-                # Save the variables to disk.
-                if avg_cls_acc > best_avg_cls_acc:
-                    best_avg_cls_acc = avg_cls_acc
-                    save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt"))
-                    log_string("Model saved in file: {0}, avg_cls_acc: {1}".format(save_path, avg_cls_acc))
-            else:
-                train_one_epoch(sess, ops, train_writer)
-                #if epoch % 3 == 0:
-                val_loss, avg_cls_acc, estimate_acc = eval_one_epoch(sess, ops, test_writer)
-                # Save the variables to disk.
-                # if val_loss < best_val_loss:
-                #     best_val_loss = val_loss
-                #     save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt"))
-                #     log_string("Model saved in file: {0}, val_loss: {1}".format(save_path, val_loss))
-                save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
-                log_string("Model saved in file: {0}".format(save_path))
+            train_one_epoch(sess, ops, train_writer)
+            #if epoch % 3 == 0:
+            val_loss, avg_cls_acc, estimate_acc = eval_one_epoch(sess, ops, test_writer)
+            # Save the variables to disk.
+            # if val_loss < best_val_loss:
+            #     best_val_loss = val_loss
+            #     save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt"))
+            #     log_string("Model saved in file: {0}, val_loss: {1}".format(save_path, val_loss))
+            save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
+            log_string("Model saved in file: {0}".format(save_path))
         train_loading_thread.stop()
         val_loading_thread.stop()
-
-def get_hard_samples(sess, ops):
-    is_training = True
-    train_idxs = np.arange(0, len(TRAIN_DATASET))
-    np.random.shuffle(train_idxs)
-    num_batches = len(TRAIN_DATASET)/BATCH_SIZE
-    hard_neg_idxs = []
-    # test on training set
-    for batch_idx in range(num_batches):
-        start_idx = batch_idx * BATCH_SIZE
-        end_idx = (batch_idx+1) * BATCH_SIZE
-
-        batch_data, batch_cls_label, batch_label, batch_center, \
-        batch_hclass, batch_hres, \
-        batch_sclass, batch_sres, \
-        batch_rot_angle, batch_feature_vec = \
-            get_batch(TRAIN_DATASET, train_idxs, start_idx, end_idx,
-                NUM_POINT, NUM_CHANNEL)
-
-        feed_dict = {ops['pointclouds_pl']: batch_data,
-                     ops['features_pl']: batch_feature_vec,
-                     ops['cls_label_pl']: batch_cls_label,
-                     ops['is_training_pl']: is_training,}
-        cls_logits_val = sess.run(ops['cls_logits'], feed_dict=feed_dict)
-        cls_preds_val = np.argmax(cls_logits_val, 1)
-        incorrect = cls_preds_val != batch_cls_label
-        false_positive = np.logical_and(incorrect, batch_cls_label == 3)
-        for i, sample_idx in enumerate(range(start_idx, end_idx)):
-            # if false_positive[i]:
-            if incorrect[i]:
-                hard_neg_idxs.append(sample_idx)
-    log_string("Find {0} hard negative samples".format(len(hard_neg_idxs)))
-    return hard_neg_idxs
 
 def train_one_epoch(sess, ops, train_writer, idxs_to_use=None):
     ''' Training for one epoch on the frustum dataset.
@@ -386,7 +281,7 @@ def train_one_epoch(sess, ops, train_writer, idxs_to_use=None):
         batch_data, batch_cls_label, batch_ious, batch_label, batch_center, \
         batch_hclass, batch_hres, \
         batch_sclass, batch_sres, \
-        batch_rot_angle, batch_feature_vec, batch_frame_ids, \
+        batch_rot_angle, batch_img_seg_map, batch_prop_box, batch_calib, batch_frame_ids, \
         batch_proposal_score, is_last_batch = TRAIN_DATASET.get_next_batch()
 
         if is_last_batch and len(batch_data) != BATCH_SIZE:
@@ -394,7 +289,9 @@ def train_one_epoch(sess, ops, train_writer, idxs_to_use=None):
             break
 
         feed_dict = {ops['pointclouds_pl']: batch_data,
-                     ops['features_pl']: batch_feature_vec,
+                     ops['img_seg_map_pl']: batch_img_seg_map,
+                     ops['prop_box_pl']: batch_prop_box,
+                     ops['calib_pl']: batch_calib,
                      ops['cls_label_pl']: batch_cls_label,
                      ops['ious_pl']: batch_ious,
                      ops['labels_pl']: batch_label,
@@ -417,16 +314,16 @@ def train_one_epoch(sess, ops, train_writer, idxs_to_use=None):
         # classification acc
         cls_preds_val = np.argmax(cls_logits_val, 1)
         cls_correct = np.sum(cls_preds_val == batch_cls_label)
-        tp = np.sum(np.logical_and(cls_preds_val == batch_cls_label, batch_cls_label < g_type2onehotclass['NonObject']))
+        tp = np.sum(np.logical_and(cls_preds_val == batch_cls_label, batch_cls_label != g_type2onehotclass['NonObject']))
         fp = np.sum(np.logical_and(cls_preds_val != batch_cls_label, batch_cls_label == g_type2onehotclass['NonObject']))
-        fn = np.sum(np.logical_and(cls_preds_val != batch_cls_label, batch_cls_label < g_type2onehotclass['NonObject']))
+        fn = np.sum(np.logical_and(cls_preds_val != batch_cls_label, batch_cls_label != g_type2onehotclass['NonObject']))
         total_tp += tp
         total_fp += fp
         total_fn += fn
         total_cls_correct += cls_correct
         total_cls_seen += BATCH_SIZE
         # only calculate seg acc and regression performance with object labels
-        obj_mask = batch_cls_label < g_type2onehotclass['NonObject']
+        obj_mask = batch_cls_label != g_type2onehotclass['NonObject']
         obj_sample_num = np.sum(obj_mask)
         total_obj_sample += obj_sample_num
         # segmentation acc
@@ -444,10 +341,12 @@ def train_one_epoch(sess, ops, train_writer, idxs_to_use=None):
             log_string('mean loss: %f' % (loss_sum / 10))
             log_string('classification accuracy: %f' % \
                 (total_cls_correct / float(total_cls_seen)))
-            log_string('recall: %f'% \
-                (float(total_tp)/(total_tp+total_fn)))
-            log_string('precision: %f'% \
-                (float(total_tp)/(total_tp+total_fp)))
+            if total_tp+total_fn > 0:
+                log_string('recall: %f'% \
+                    (float(total_tp)/(total_tp+total_fn)))
+            if total_tp+total_fp > 0:
+                log_string('precision: %f'% \
+                    (float(total_tp)/(total_tp+total_fp)))
             if total_seen > 0:
                 log_string('segmentation accuracy: %f' % \
                     (total_correct / float(total_seen)))
@@ -507,7 +406,7 @@ def eval_one_epoch(sess, ops, test_writer):
         batch_data, batch_cls_label, batch_ious, batch_label, batch_center, \
         batch_hclass, batch_hres, \
         batch_sclass, batch_sres, \
-        batch_rot_angle, batch_feature_vec, batch_frame_ids, \
+        batch_rot_angle, batch_img_seg_map, batch_prop_box, batch_calib, batch_frame_ids, \
         batch_proposal_score, is_last_batch = TEST_DATASET.get_next_batch()
 
         if is_last_batch and len(batch_data) != BATCH_SIZE:
@@ -515,7 +414,9 @@ def eval_one_epoch(sess, ops, test_writer):
             break
 
         feed_dict = {ops['pointclouds_pl']: batch_data,
-                     ops['features_pl']: batch_feature_vec,
+                     ops['img_seg_map_pl']: batch_img_seg_map,
+                     ops['prop_box_pl']: batch_prop_box,
+                     ops['calib_pl']: batch_calib,
                      ops['cls_label_pl']: batch_cls_label,
                      ops['ious_pl']: batch_ious,
                      ops['labels_pl']: batch_label,
@@ -539,9 +440,9 @@ def eval_one_epoch(sess, ops, test_writer):
         # classification acc
         cls_preds_val = np.argmax(cls_logits_val, 1)
         cls_correct = np.sum(cls_preds_val == batch_cls_label)
-        tp = np.sum(np.logical_and(cls_preds_val == batch_cls_label, batch_cls_label < g_type2onehotclass['NonObject']))
+        tp = np.sum(np.logical_and(cls_preds_val == batch_cls_label, batch_cls_label != g_type2onehotclass['NonObject']))
         fp = np.sum(np.logical_and(cls_preds_val != batch_cls_label, batch_cls_label == g_type2onehotclass['NonObject']))
-        fn = np.sum(np.logical_and(cls_preds_val != batch_cls_label, batch_cls_label < g_type2onehotclass['NonObject']))
+        fn = np.sum(np.logical_and(cls_preds_val != batch_cls_label, batch_cls_label != g_type2onehotclass['NonObject']))
         total_tp += tp
         total_fp += fp
         total_fn += fn
@@ -552,7 +453,7 @@ def eval_one_epoch(sess, ops, test_writer):
             total_correct_class[l] += (np.sum((cls_preds_val==l) & (batch_cls_label==l)))
 
         # only calculate seg acc and regression performance with object labels
-        obj_mask = batch_cls_label < g_type2onehotclass['NonObject']
+        obj_mask = batch_cls_label != g_type2onehotclass['NonObject']
         obj_sample_num = np.sum(obj_mask)
         total_obj_sample += obj_sample_num
         # segmentation acc
