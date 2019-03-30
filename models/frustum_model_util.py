@@ -19,8 +19,7 @@ NUM_HEADING_BIN = 12
 NUM_OBJECT_POINT = 512
 NUM_CHANNEL = 4
 REG_IOU = 0.55
-type_whitelist = ['Car', 'Pedestrian', 'Cyclist', 'NonObject']
-# type_whitelist = ['Car', 'NonObject']
+type_whitelist = ['NonObject', 'Car', 'Pedestrian', 'Cyclist']
 '''
 g_type2class={'Car':0, 'Van':1, 'Truck':2, 'Pedestrian':3,
               'Person_sitting':4, 'Cyclist':5, 'Tram':6, 'Misc':7, 'NonObject': 8}
