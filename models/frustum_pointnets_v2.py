@@ -56,9 +56,9 @@ def get_instance_seg_v2_net(point_cloud, feature_vec, cls_label,
     # use image only
     #cls_net = feature_vec
     # use point and image feature
-    cls_net = tf.concat([point_feats, feature_vec], axis=1)
+    #cls_net = tf.concat([point_feats, feature_vec], axis=1)
     # use point only
-    #cls_net = point_feats
+    cls_net = point_feats
     cls_net = tf_util.fully_connected(cls_net, 512, bn=True, is_training=is_training, scope='cls_fc1', bn_decay=bn_decay)
     cls_net = tf_util.dropout(cls_net, keep_prob=0.5, is_training=is_training, scope='cls_dp1')
     cls_net = tf_util.fully_connected(cls_net, 256, bn=True, is_training=is_training, scope='cls_fc2', bn_decay=bn_decay)
