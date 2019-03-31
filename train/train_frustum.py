@@ -170,10 +170,14 @@ def train():
                 optimizer = tf.train.AdamOptimizer(learning_rate)
 
             if FLAGS.train_cls_only:
-                var_list = tf.trainable_variables('cls_')
+                # var_list = tf.trainable_variables('cls_')
+                var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='proposal_classification')
+                loss = loss_endpoints['cls_loss']
             elif FLAGS.train_reg_only:
-                tvars = tf.trainable_variables()
-                var_list = [var for var in tvars if 'cls_' not in var.name]
+                # tvars = tf.trainable_variables()
+                # var_list = [var for var in tvars if 'cls_' not in var.name]
+                var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='box_regression')
+                loss = loss_endpoints['box_loss']
             else:
                 var_list = tf.trainable_variables()
 
