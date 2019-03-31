@@ -466,21 +466,16 @@ def get_loss(cls_label, ious, mask_label, center_label, \
     tf.summary.scalar('corners loss', corners_loss)
 
     # Weighted sum of all losses
-    total_loss = cls_loss + mask_loss + box_loss_weight * (center_loss + \
+    box_loss = mask_loss + box_loss_weight * (center_loss + \
         heading_class_loss + size_class_loss + \
         heading_residual_normalized_loss*20 + \
         size_residual_normalized_loss*20 + \
         stage1_center_loss + \
         corner_loss_weight*corners_loss)
+    total_loss = cls_loss + box_loss
     tf.add_to_collection('losses', total_loss)
     loss_endpoints = {
-        'size_residual_label_normalized': size_residual_label_normalized,
-        'predicted_size_residual_normalized': predicted_size_residual_normalized,
-        'size_residual_label': size_residual_label,
-        'mean_size_label': mean_size_label,
-        'size_normalized_dist': size_normalized_dist,
-        'corners_dist_' : corners_dist_,
-        'corners_dist_flip': corners_dist_flip,
-        'corners_dist': corners_dist,
+        'cls_loss': cls_loss,
+        'box_loss': box_loss
     }
     return total_loss, loss_endpoints
