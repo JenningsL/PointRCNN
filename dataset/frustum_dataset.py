@@ -12,9 +12,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'kitti'))
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
-sys.path.append(os.path.join(ROOT_DIR, 'mayavi'))
+sys.path.append(os.path.join(ROOT_DIR, 'visualize/mayavi'))
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
-from data_util import extract_pc_in_box3d, ProposalObject
+from data_util import extract_pc_in_box3d, ProposalObject, random_shift_box3d
 from kitti_object import *
 import kitti_util as utils
 from frustum_model_util import g_type2class, g_class2type, g_type2onehotclass, g_type_mean_size
@@ -25,18 +25,6 @@ from shapely.geometry import Polygon, MultiPolygon
 from Queue import Queue
 from sklearn.neighbors import KDTree
 
-
-def random_shift_box3d(obj, shift_ratio=0.1):
-    '''
-    Randomly w, l, h
-    '''
-    r = shift_ratio
-    # 0.9 to 1.1
-    obj.t[0] = obj.t[0] + min(obj.w, obj.l)*r*(np.random.random()*2-1)
-    obj.t[2] = obj.t[2] + min(obj.w, obj.l)*r*(np.random.random()*2-1)
-    obj.w = obj.w*(1+np.random.random()*2*r-r)
-    obj.l = obj.l*(1+np.random.random()*2*r-r)
-    return obj
 
 def is_near(prop1, prop2):
     c1 = np.array(prop1.t)
@@ -93,7 +81,7 @@ class Sample(object):
 class FrustumDataset(object):
     def __init__(self, npoints, kitti_path, batch_size, split, save_dir,
                  augmentX=1, random_shift=False, rotate_to_center=False, random_flip=False,
-                 perturb_prop=False, fill_with_label=False):
+                 use_gt_prop=False):
         self.npoints = npoints
         self.random_shift = random_shift
         self.random_flip = random_flip
@@ -105,7 +93,7 @@ class FrustumDataset(object):
         self.split = split
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        self.fill_with_label = fill_with_label
+        self.use_gt_prop = use_gt_prop
         #self.num_channel = 7
         self.num_channel = 4
         # rpn_output_path = os.path.join(kitti_path, 'training/proposal_car_people')
@@ -121,7 +109,6 @@ class FrustumDataset(object):
         self.load_progress = 0
         self.batch_size = batch_size
         self.augmentX = augmentX
-        self.perturb_prop = perturb_prop
 
         self.sample_id_counter = -1 # as id for sample
         self.stop = False # stop loading thread
@@ -371,42 +358,6 @@ class FrustumDataset(object):
         box3d_center = (box3d[0,:] + box3d[6,:])/2.0
         return box3d_center
 
-    def expand_points(self, pc_rect, proposal, calib, seed_ind, data_idx_str):
-        prop = copy.deepcopy(proposal)
-        prop.l += 1
-        prop.w += 1
-        prop_corners_image_2d, prop_corners_3d = utils.compute_box_3d(prop, calib.P)
-        _, local_ind = extract_pc_in_box3d(pc_rect, prop_corners_3d)
-        local_points = pc_rect[local_ind]
-        local_seg = self.pc_seg[data_idx_str][local_ind]
-        fg_ind = local_seg == 1
-        keypoints = pc_rect[seed_ind]
-        # print(np.sum(seed_ind))
-        # print(np.sum(local_ind))
-        # print(np.sum(fg_ind))
-        print('before: ', keypoints.shape[0])
-
-        candidates_ind = np.logical_and(np.logical_not(seed_ind), local_ind)
-        candidates_ind = np.logical_and(candidates_ind, self.pc_seg[data_idx_str] == 1)
-
-        candidates_points = pc_rect[candidates_ind]
-        print('candidates size: ', candidates_points.shape[0])
-        while True:
-            tree = KDTree(keypoints[:,:3], leaf_size=2)
-            new_kp = []
-            selected = np.zeros((len(candidates_points),))
-            for i in range(len(candidates_points)):
-                if tree.query_radius(np.expand_dims(candidates_points[i, :3], axis=0), r=0.3, count_only=True) >= 3:
-                    new_kp.append(candidates_points[i])
-                selected[i] = 1
-            if len(new_kp) == 0:
-                break
-            keypoints = np.concatenate((keypoints, new_kp), axis=0)
-            candidates_points = candidates_points[selected==0]
-        print('after: ', keypoints.shape[0])
-        return keypoints
-
-
     def get_one_sample(self, proposal, pc_rect, image, calib, iou, gt_box_3d, gt_object, data_idx_str, img_seg_map):
         '''convert to frustum sample format'''
         prop_corners_image_2d, prop_corners_3d = utils.compute_box_3d(proposal, calib.P)
@@ -428,8 +379,8 @@ class FrustumDataset(object):
         xmax, ymax = expand_image_points.max(0)
         # TODO: frustum angle is important, make use of image
         # use gt angle for testing
-        if gt_object is not None:
-            xmin,ymin,xmax,ymax = gt_object.box2d
+        # if gt_object is not None:
+        #     xmin,ymin,xmax,ymax = gt_object.box2d
 
         box2d_center = np.array([(xmin+xmax)/2.0, (ymin+ymax)/2.0])
         uvdepth = np.zeros((1,3))
@@ -441,9 +392,6 @@ class FrustumDataset(object):
 
         if gt_object is not None:
             obj_type = gt_object.type
-            # TODO: use dbscan instead of ground truth
-            #_,gt_inds = extract_pc_in_box3d(pc_rect, gt_box_3d)
-            #prop_inds = np.logical_or(prop_inds, gt_inds)
 
             _,inds = extract_pc_in_box3d(pc_in_prop_box, gt_box_3d)
             seg_mask[inds] = 1
@@ -499,7 +447,7 @@ class FrustumDataset(object):
 
     def visualize_one_sample(self, old_points, expand_points, gt_box_3d, prop_box_3d, box2d_center_rect):
         import mayavi.mlab as mlab
-        from viz_util import draw_lidar, draw_lidar_simple, draw_gt_boxes3d
+        from mayavi_utils import draw_lidar, draw_lidar_simple, draw_gt_boxes3d
         # fig = draw_lidar(pc_in_prop_box, pts_color=(1,1,1))
         fig = draw_lidar(expand_points[:, :3], pts_color=(1,1,1))
         fig = draw_lidar(old_points[:, :3], pts_color=(0,1,0), fig=fig)
@@ -520,38 +468,23 @@ class FrustumDataset(object):
         mlab.plot3d([0, box2d_center_rect[0][0]], [0, box2d_center_rect[0][1]], [0, box2d_center_rect[0][2]], color=(1,1,1), tube_radius=None, figure=fig)
         raw_input()
 
-    def get_proposal_from_label(self, label, calib):
+    def get_proposals_from_label(self, labels, calib):
         '''construct proposal from label'''
-        _, corners_3d = utils.compute_box_3d(label, calib.P)
-        bev_box = corners_3d[:4, [0,2]]
-        box_l = label.l
-        box_w = label.w
-        box_h = label.h
-        # Rotate to nearest multiple of 90 degrees
-        box_ry = label.ry
-        half_pi = np.pi / 2
-        box_ry = np.abs(np.round(box_ry / half_pi) * half_pi)
-        cos_ry = np.abs(np.cos(box_ry))
-        sin_ry = np.abs(np.sin(box_ry))
-        w = box_l * cos_ry + box_w * sin_ry
-        l = box_w * cos_ry + box_l * sin_ry
-        h = box_h
+        proposals = []
+        for label in labels:
+            for _ in range(self.augmentX):
+                prop = ProposalObject(list(label.t) + [label.l, label.h, label.w, label.ry], 1.0, label.type, None)
+                prop = random_shift_box3d(prop)
+                proposals.append(prop)
 
-        prop_obj = ProposalObject(list(label.t) + [l, h, w, box_ry], 1, label.type, None)
-        _, corners_prop = utils.compute_box_3d(prop_obj, calib.P)
-        bev_box_prop = corners_prop[:4, [0,2]]
+        return proposals
 
-        prop_poly = Polygon(bev_box_prop)
-        gt_poly = Polygon(bev_box)
-        intersection = prop_poly.intersection(gt_poly)
-        iou = intersection.area / (prop_poly.area + gt_poly.area - intersection.area)
-        return prop_obj, iou
-
-    def visualize_proposals(self, pc_rect, prop_boxes, neg_boxes, gt_boxes, pc_seg):
+    def visualize_proposals(self, pc_rect, prop_boxes, neg_boxes, gt_boxes, pc_seg=None):
         import mayavi.mlab as mlab
-        from viz_util import draw_lidar, draw_gt_boxes3d
+        from mayavi_utils import draw_lidar, draw_gt_boxes3d
         fig = draw_lidar(pc_rect)
-        fig = draw_lidar(pc_rect[pc_seg==1], fig=fig, pts_color=(1, 1, 1))
+        if pc_seg:
+            fig = draw_lidar(pc_rect[pc_seg==1], fig=fig, pts_color=(1, 1, 1))
         fig = draw_gt_boxes3d(prop_boxes, fig, draw_text=False, color=(1, 0, 0))
         fig = draw_gt_boxes3d(neg_boxes, fig, draw_text=False, color=(0, 1, 0))
         fig = draw_gt_boxes3d(gt_boxes, fig, draw_text=False, color=(1, 1, 1))
@@ -559,9 +492,6 @@ class FrustumDataset(object):
 
     def load_frame_data(self, data_idx_str):
         '''load data for the first time'''
-        # if os.path.exists(os.path.join(self.save_dir, frame_id+'.pkl')):
-        #     with open(os.path.join(self.save_dir, frame_id+'.pkl'), 'rb') as f:
-        #         return pickle.load(f)
         start = time.time()
         data_idx = int(data_idx_str)
         try:
@@ -574,7 +504,6 @@ class FrustumDataset(object):
             return {'samples': [], 'pos_idxs': []}
         calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
         objects = self.kitti_dataset.get_label_objects(data_idx)
-        proposals = self.get_proposals(rpn_out)
         image = self.kitti_dataset.get_image(data_idx)
         pc_velo = self.kitti_dataset.get_lidar(data_idx)
         img_height, img_width = image.shape[0:2]
@@ -598,18 +527,16 @@ class FrustumDataset(object):
             gt_boxes_3d.append(gt_corners_3d)
         recall = np.zeros((len(objects),))
 
+        if self.use_gt_prop:
+            proposals = self.get_proposals_from_label(objects, calib)
+        else:
+            proposals = self.get_proposals(rpn_out)
+
         samples = []
         pos_idxs = []
         pos_box = []
         neg_box = []
         avg_iou = []
-        groups = self.group_overlaps(proposals, calib, 0.7)
-        proposals_reduced = []
-        KEEP_OVERLAP = self.augmentX
-        for g in groups:
-            random.shuffle(g)
-            proposals_reduced += g[:KEEP_OVERLAP]
-        proposals = proposals_reduced
         for prop_ in proposals:
             prop = copy.deepcopy(prop_)
             prop_corners_image_2d, prop_corners_3d = utils.compute_box_3d(prop_, calib.P)
@@ -634,16 +561,6 @@ class FrustumDataset(object):
                 obj_type = objects[obj_idx].type
                 if self.roi_feature_.get(obj_type) is None:
                     self.roi_feature_[obj_type] = prop_.roi_features
-                # adjust proposal box with ground truth
-                '''
-                gt_prop, iou_with_gt = self.get_proposal_from_label(objects[obj_idx], calib, prop_.roi_features)
-                prop_.t = gt_prop.t
-                prop_.w = gt_prop.w
-                prop_.h = gt_prop.h
-                prop_.l = gt_prop.l
-                prop_.ry = gt_prop.ry
-                '''
-                #####
                 avg_iou.append(iou_with_gt)
 
                 sample = self.get_one_sample(prop, pc_rect, image, calib, iou_with_gt, gt_boxes_3d[obj_idx], objects[obj_idx], data_idx_str, img_seg_map)
@@ -656,28 +573,9 @@ class FrustumDataset(object):
             else:
                 continue
 
-        # use groundtruth to generate proposal
-        if self.fill_with_label:
-            for i in range(len(objects)):
-                if recall[i]:
-                    continue
-                gt_prop, iou_with_gt = self.get_proposal_from_label(objects[i], calib)
-
-                for _ in range(self.augmentX):
-                    prop = copy.deepcopy(gt_prop)
-                    # if self.perturb_prop:
-                    prop = random_shift_box3d(prop)
-                    sample = self.get_one_sample(prop, pc_rect, image, calib, iou_with_gt, gt_boxes_3d[i], objects[i], data_idx_str, img_seg_map)
-                    if sample:
-                        pos_idxs.append(len(samples))
-                        samples.append(sample)
-                        recall[i] = 1
-                        #_, prop_corners_3d = utils.compute_box_3d(prop, calib.P)
-                        pos_box.append(prop_corners_3d)
-
-        # self.visualize_proposals(pc_rect, pos_box, neg_box, gt_boxes_3d, self.pc_seg[data_idx_str])
+        # self.visualize_proposals(pc_rect, pos_box, neg_box, gt_boxes_3d)
         self.load_progress += 1
-        #print('load {} samples, pos {}'.format(len(samples), len(pos_idxs)))
+        # print('load {} samples, pos {}'.format(len(samples), len(pos_idxs)))
         ret = {'samples': samples, 'pos_idxs': pos_idxs}
         if len(objects) > 0:
             ret['recall'] = np.sum(recall)/len(objects)
@@ -714,17 +612,16 @@ if __name__ == '__main__':
     split = sys.argv[2]
     if split == 'train':
         augmentX = 5
-        perturb_prop = False
-        fill_with_label = True
+        use_gt_prop = True
     else:
         augmentX = 1
-        perturb_prop = False
-        fill_with_label = False
+        use_gt_prop = False
     dataset = FrustumDataset(512, kitti_path, 16, split, save_dir='./dataset_car_people/'+split,
-                 augmentX=augmentX, random_shift=False, rotate_to_center=True, random_flip=False,
-                 perturb_prop=perturb_prop, fill_with_label=fill_with_label)
+                 augmentX=augmentX, random_shift=True, rotate_to_center=True, random_flip=True,
+                 use_gt_prop=use_gt_prop)
     #dataset.preprocess()
-    dataset.load_buffer_repeatedly(0.5)
+    # dataset.load_buffer_repeatedly(0.5)
+
     '''
     produce_thread = threading.Thread(target=dataset.load_buffer_repeatedly, args=(1.0,))
     produce_thread.start()

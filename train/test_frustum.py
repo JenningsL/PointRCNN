@@ -53,7 +53,7 @@ MODEL = importlib.import_module(FLAGS.model)
 
 TEST_DATASET = FrustumDataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', BATCH_SIZE, 'val',
              save_dir='/data/ssd/public/jlliu/frustum-pointnets/train/rpn_dataset_car_people/val',
-             augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, fill_with_label=False)
+             augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, use_gt_prop=False)
 
 kitti_dataset = kitti_object('/data/ssd/public/jlliu/Kitti/object')
 
