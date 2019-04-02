@@ -19,7 +19,7 @@ import projection
 # https://github.com/deepsense-ai/roi-pooling
 from roi_pooling.roi_pooling_ops import roi_pooling
 
-def get_proposal_cls_net(point_cloud, img_seg_map, is_training, bn_decay, end_points):
+def get_proposal_cls_net(point_cloud, img_seg_map, proposal_boxes, calib, is_training, bn_decay, end_points):
     batch_size = point_cloud.shape[0]
     l0_xyz = tf.slice(point_cloud, [0,0,0], [-1,-1,3])
     l0_points = tf.slice(point_cloud, [0,0,3], [-1,-1,NUM_CHANNEL-3])
@@ -59,20 +59,24 @@ def get_proposal_cls_net(point_cloud, img_seg_map, is_training, bn_decay, end_po
         [16,16])
     '''
     # roi pooling in faster-rcnn
-    img_seg_map = tf_util.conv2d(img_seg_map, 1, 1, padding='VALID', bn=True,
+    img_seg_map = tf_util.conv2d(img_seg_map, 1, [1,1], padding='VALID', bn=True,
         is_training=is_training, scope='cls_feature_bottleneck', bn_decay=bn_decay)
-    # feature map index, upper left, bottom right coordinates
-    roi_crops = tf.concat(tf.expand_dims(tf.range(0, batch_size), axis=-1), box2d_corners, axis=-1)
+    # [feature map index, upper left, bottom right coordinates]
+    roi_crops = tf.concat([tf.expand_dims(tf.range(0, batch_size), axis=-1), tf.cast(box2d_corners, tf.int32)], axis=-1)
+    #print(roi_crops.shape)
     img_rois = roi_pooling(img_seg_map, roi_crops, pool_height=16, pool_width=16)
+    img_rois.set_shape([batch_size, 16, 16])
+    #print(img_rois.shape)
 
     img_feats = tf.reshape(img_rois, [batch_size, -1])
+    end_points['img_rois'] = img_feats
 
     # classification
     point_feats = tf.reshape(l3_points, [batch_size, -1])
     # use image only
-    #cls_net = img_feats
+    cls_net = img_feats
     # use point and image feature
-    cls_net = tf.concat([point_feats, img_feats], axis=1)
+    #cls_net = tf.concat([point_feats, img_feats], axis=1)
     # use point only
     #cls_net = point_feats
     cls_net = tf_util.fully_connected(cls_net, 512, bn=True, is_training=is_training, scope='cls_fc1', bn_decay=bn_decay)
@@ -211,15 +215,15 @@ def get_model(point_cloud, cls_label, img_seg_map, proposal_boxes, calib, is_tra
     end_points = {}
     batch_size = point_cloud.get_shape()[0]
 
-    with tf.name_scope('proposal_classification'):
-        end_points = get_proposal_cls_net(point_cloud, img_seg_map, is_training, bn_decay, end_points)
+    with tf.variable_scope('proposal_classification'):
+        end_points = get_proposal_cls_net(point_cloud, img_seg_map, proposal_boxes, calib, is_training, bn_decay, end_points)
 
     cls_label_pred = tf.argmax(tf.nn.softmax(end_points['cls_logits']), axis=1)
     end_points['one_hot_vec'] = tf.one_hot(cls_label_pred, NUM_OBJ_CLASSES)
     end_points['one_hot_gt'] = tf.one_hot(cls_label, NUM_OBJ_CLASSES)
     one_hot_vec = tf.cond(is_training, lambda: end_points['one_hot_gt'], lambda: end_points['one_hot_vec'])
 
-    with tf.name_scope('box_regression'):
+    with tf.variable_scope('box_regression'):
         # 3D Instance Segmentation PointNet
         logits, end_points = get_instance_seg_v2_net(\
             point_cloud, one_hot_vec,
@@ -245,7 +249,7 @@ def get_model(point_cloud, cls_label, img_seg_map, proposal_boxes, calib, is_tra
         object_point_cloud_new = tf.concat([object_point_cloud_xyz_new, object_point_cloud_features], axis=-1)
         # Amodel Box Estimation PointNet
         output, end_points = get_3d_box_estimation_v2_net(\
-            object_point_cloud_new, one_hot_vec, img_rois,
+            object_point_cloud_new, one_hot_vec, end_points['img_rois'],
             is_training, bn_decay, end_points)
 
         # Parse output to 3D box parameters

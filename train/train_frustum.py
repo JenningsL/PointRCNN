@@ -429,7 +429,7 @@ def eval_one_epoch(sess, ops, test_writer):
                      ops['heading_residual_label_pl']: batch_hres,
                      ops['size_class_label_pl']: batch_sclass,
                      ops['size_residual_label_pl']: batch_sres,
-                     ops['is_training_pl']: is_training}
+                     ops['is_training_pl']: is_training or FLAGS.train_reg_only}
 
         summary, step, loss_val, loss_endpoints, cls_logits_val, logits_val, iou2ds, iou3ds = \
             sess.run([ops['merged'], ops['step'],
