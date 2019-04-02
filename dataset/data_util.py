@@ -87,7 +87,7 @@ def random_shift_box3d(obj, shift_ratio=0.1):
     obj.t[1] = obj.t[1] + obj.w*r*(np.random.random()*2-1)
     obj.w = obj.w*(1+np.random.random()*2*r-r)
     obj.l = obj.l*(1+np.random.random()*2*r-r)
-    obj.ry += (np.pi / 3.6 * (np.random.random()*2*r-r)) # -5~5 degree
+    obj.ry += (2.0 * np.pi / 1.8 * (np.random.random()*2*r-r)) # np.pi / 1.8 = 10 degree
     if obj.ry > np.pi:
         obj.ry -= 2*np.pi
     elif obj.ry < -np.pi:

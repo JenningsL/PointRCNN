@@ -73,10 +73,10 @@ BN_DECAY_CLIP = 0.99
 # load data set in background thread, remember to join data_loading_thread somewhere
 TRAIN_DATASET = FrustumDataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', BATCH_SIZE, 'train',
              save_dir='/data/ssd/public/jlliu/frustum-pointnets/train/rpn_dataset_car_people/train',
-             augmentX=5, random_shift=True, rotate_to_center=True, random_flip=True, fill_with_label=True)
+             augmentX=5, random_shift=True, rotate_to_center=True, random_flip=True, use_gt_prop=True)
 TEST_DATASET = FrustumDataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', BATCH_SIZE, 'val',
              save_dir='/data/ssd/public/jlliu/frustum-pointnets/train/rpn_dataset_car_people/val',
-             augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, fill_with_label=False)
+             augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, use_gt_prop=True)
 train_loading_thread = Thread(target=TRAIN_DATASET.load_buffer_repeatedly, args=(FLAGS.pos_ratio, False))
 val_loading_thread = Thread(target=TEST_DATASET.load_buffer_repeatedly, args=(FLAGS.pos_ratio, True))
 train_loading_thread.start()
