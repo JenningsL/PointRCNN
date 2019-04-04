@@ -69,6 +69,8 @@ class Dataset(object):
         i = 0
         while not self.stop:
             frame_id = self.frame_ids[i]
+            if type(frame_id) == int:
+                frame_id = '{:06}'.format(frame_id)
             #print('loading ' + frame_id)
             for x in range(self.AUG_X):
                 #start = time.time()

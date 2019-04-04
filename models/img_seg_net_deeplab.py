@@ -53,6 +53,17 @@ class ImgSegNet(object):
     def get_semantic_seg(self):
         return self.graph.get_tensor_by_name('deeplab_v3/SemanticPredictions:0')
 
+    def get_feature_map(self):
+        # TODO: coarse feature map with size (batch_size, 100,350, 256)
+        coarse_feature = self.graph.get_tensor_by_name('deeplab_v3/decoder/decoder_conv1_pointwise/Relu:0')
+        return coarse_feature
+        resized_feature = tf.image.resize_images(
+            coarse_feature,
+            [360,1200],
+            method=tf.image.ResizeMethod.NEAREST_NEIGHBOR,
+            align_corners=True)
+        return resized_feature
+
     def get_seg_softmax(self):
         point_cloud = self.placeholders['pointclouds']
         mask_label = self.placeholders['seg_labels']
@@ -78,8 +89,9 @@ if __name__ == '__main__':
         with tf.device('/gpu:0'):
             seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT)
             seg_net.load_graph(sys.argv[1])
-            seg_softmax = seg_net.get_seg_softmax()
+            pts_softmax = seg_net.get_seg_softmax()
             semantic_seg = seg_net.get_semantic_seg()
+            feat_map = seg_net.get_feature_map()
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
         config.allow_soft_placement = True
@@ -106,12 +118,15 @@ if __name__ == '__main__':
             pls['seg_labels']: batch_data['seg_label']
         }
         start = time.time()
-        logits_val, full_output = sess.run([seg_softmax, semantic_seg], feed_dict=feed_dict)
+        logits_val, full_output, feat_map_val = sess.run([pts_softmax, semantic_seg, feat_map], feed_dict=feed_dict)
         print('infer time:', time.time()-start)
-        print(full_output.shape)
         # save segmentation logits map
         for i in range(len(batch_data['ids'])):
             np.save(os.path.join('./rcnn_data', batch_data['ids'][i]+'_seg.npy'), full_output[i])
+        # TODO: feature map is too large
+        #print(feat_map_val.shape)
+        #for i in range(len(batch_data['ids'])):
+        #    np.save(os.path.join('./rcnn_data', batch_data['ids'][i]+'_feat.npy'), feat_map_val[i])
         # (batch_size, num_points, 1)
         preds_val = np.argmax(logits_val, axis=-1)
         '''

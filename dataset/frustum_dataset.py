@@ -92,7 +92,7 @@ class FrustumDataset(object):
         self.use_gt_prop = use_gt_prop
         #self.num_channel = 7
         self.num_channel = 4
-        self.is_testing = split in ['train', 'val']
+        self.is_testing = (split not in ['train', 'val'])
         if not self.is_testing:
             self.kitti_dataset = kitti_object(kitti_path, 'training')
             self.frame_ids = self.load_split_ids(split)
@@ -102,7 +102,7 @@ class FrustumDataset(object):
                 os.path.join(kitti_path, 'image_02/data'),
                 os.path.join(kitti_path, 'velodyne_points/data'),
                 kitti_path)
-            self.frame_ids = range(self.kitti_dataset.num_samples)
+            self.frame_ids = map(lambda x: '{:06}'.format(x), range(self.kitti_dataset.num_samples))
         self.cur_batch = -1
         self.load_progress = 0
         self.batch_size = batch_size

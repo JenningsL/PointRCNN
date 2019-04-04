@@ -20,13 +20,14 @@ from train_util import compute_proposal_recall, compute_box3d_iou
 from model_util import NUM_FG_POINT
 from box_encoder import BoxEncoder
 from rpn import RPN, NUM_SEG_CLASSES
-from img_seg_net import ImgSegNet
+from img_seg_net_deeplab import ImgSegNet
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
 parser.add_argument('--num_point', type=int, default=16384, help='Point Number [default: 16384]')
 parser.add_argument('--batch_size', type=int, default=32, help='Batch Size during training [default: 32]')
 parser.add_argument('--model_path', default=None, help='Restore model path e.g. log/model.ckpt [default: None]')
+parser.add_argument('--img_model_path', default=None, help='Restore image seg model path e.g. ./frozen_inference_graph.pb [default: None]')
 parser.add_argument('--kitti_path', default='/data/ssd/public/jlliu/Kitti/object', help='Kitti root path')
 parser.add_argument('--split', default='val', help='Data split to use [default: val]')
 FLAGS = parser.parse_args()
@@ -43,10 +44,12 @@ def log_string(out_str):
     print(out_str)
 
 
-def test(split):
+def test(split, save_result=False):
+    if save_result and not os.path.exists('./rcnn_data_'+split):
+        os.mkdir('./rcnn_data_'+split)
     is_training = False
     #dataset = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', split, is_training=is_training)
-    dataset = Dataset(NUM_POINT, KITTI_PATH, split, is_training=True)
+    dataset = Dataset(NUM_POINT, KITTI_PATH, split, is_training=is_training)
     # data loading threads
     produce_thread = Thread(target=dataset.load, args=(False,))
     produce_thread.start()
@@ -75,12 +78,14 @@ def test(split):
 
     with tf.Graph().as_default():
         with tf.device('/gpu:0'):
-            img_seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT, num_channel=4, bn_decay=None, is_training=is_training)
+            #img_seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT, num_channel=4, bn_decay=None, is_training=is_training)
+            #seg_softmax = img_seg_net.get_seg_softmax()
+            #saver1 = tf.train.Saver()
+            img_seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT)
+            #img_seg_net.load_graph('/data/ssd/public/jlliu/models/research/deeplab/exp/frozen_inference_graph.pb')
+            img_seg_net.load_graph(FLAGS.img_model_path)
             seg_softmax = img_seg_net.get_seg_softmax()
-            #seg_net = ImgSegNet(BATCH_SIZE, NUM_POINT)
-            #seg_net.load_graph('./frozen_inference_graph.pb')
-            #seg_softmax = seg_net.get_seg_softmax()
-            saver1 = tf.train.Saver()
+            full_seg = img_seg_net.get_semantic_seg()
         # Create another session
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
@@ -88,7 +93,7 @@ def test(split):
         config.log_device_placement = False
         sess1 = tf.Session(config=config)
 
-        saver1.restore(sess1, './log_img/model.ckpt')
+        #saver1.restore(sess1, FLAGS.img_model_path)
 
     log_string(str(datetime.now()))
 
@@ -100,17 +105,9 @@ def test(split):
     fp = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
     fn = {'Car': 0, 'Pedestrian': 0, 'Cyclist': 0}
 
-    frame_ids = []
-    fg_indices = []
-    centers = []
-    angles = []
-    sizes = []
     proposal_boxes = []
     gt_boxes = []
     nms_indices = []
-    scores = []
-    segmentation = [] # point segmentation
-    pc_choices = [] # point sampling indices
 
     while(True):
         batch_data, is_last_batch = dataset.get_next_batch(BATCH_SIZE, need_id=True)
@@ -137,15 +134,19 @@ def test(split):
 
         # segmentaion with image
         seg_pls = img_seg_net.placeholders
-        img_seg_logits = sess1.run(seg_softmax, feed_dict={
+        img_seg_logits, full_img_seg = sess1.run([seg_softmax, full_seg], feed_dict={
             seg_pls['pointclouds']: batch_data['pointcloud'],
             seg_pls['img_inputs']: batch_data['images'],
             seg_pls['calib']: batch_data['calib'],
             seg_pls['seg_labels']: batch_data['seg_label'],
-            seg_pls['is_training_pl']: is_training
+            #seg_pls['is_training_pl']: is_training
         })
-        img_seg_logits *= np.array([0, 1]) # weights
-        feed_dict[pls['img_seg_softmax']] = img_seg_logits
+        # convert to binary segmentation
+        img_seg_binary = np.zeros((BATCH_SIZE, NUM_POINT, 2))
+        img_seg_binary[...,0] = img_seg_logits[...,0]
+        img_seg_binary[...,1] = np.sum(img_seg_logits[...,1:], axis=-1)
+        img_seg_binary *= np.array([1, 1]) # weights
+        feed_dict[pls['img_seg_softmax']] = img_seg_binary
         '''
         # label to one_hot
         targets = batch_data['seg_label']
@@ -170,34 +171,30 @@ def test(split):
             fn[c] += np.sum(np.logical_and(preds_val != batch_data['seg_label'], batch_data['seg_label'] == one_hot_class))
         # results
         for i in range(BATCH_SIZE):
-            frame_ids.append(batch_data['ids'][i])
-            segmentation.append(preds_val[i])
-            centers.append(centers_val[i])
-            angles.append(angles_val[i])
-            sizes.append(sizes_val[i])
             proposal_boxes.append(corners_val[i])
-            nms_indices.append(ind_val[i])
-            scores.append(scores_val[i])
             gt_boxes.append(batch_data['gt_boxes'][i])
-            pc_choices.append(batch_data['pc_choice'][i])
+            nms_indices.append(ind_val[i])
+            frame_data = {
+                'frame_id': batch_data['ids'][i],
+                'segmentation': preds_val[i],
+                'centers': centers_val[i],
+                'angles': angles_val[i],
+                'sizes': sizes_val[i],
+                'proposal_boxes': corners_val[i],
+                'nms_indices': ind_val[i],
+                'scores': scores_val[i],
+                'pc_choices': batch_data['pc_choice'][i]
+            }
+            # save frame data
+            if save_result:
+                with open(os.path.join('./rcnn_data_'+split, batch_data['ids'][i]+'.pkl'), 'wb') as fout:
+                    pickle.dump(frame_data, fout)
+                np.save(os.path.join('./rcnn_data_'+split, batch_data['ids'][i]+'_seg.npy'), full_img_seg[i])
         if is_last_batch:
-        #if num_batches >= 500:
             break
 
-    '''
-    with open('rpn_out_{0}.pkl'.format(split),'wb') as fout:
-        pickle.dump(frame_ids, fout)
-        pickle.dump(segmentation, fout)
-        pickle.dump(centers, fout)
-        pickle.dump(angles, fout)
-        pickle.dump(sizes, fout)
-        pickle.dump(proposal_boxes, fout)
-        pickle.dump(nms_indices, fout)
-        pickle.dump(scores, fout)
-        # pickle.dump(gt_boxes, fout)
-        pickle.dump(pc_choices, fout)
     log_string('saved prediction')
-    '''
+
     dataset.stop_loading()
     produce_thread.join()
 
@@ -207,18 +204,19 @@ def test(split):
     print('IOU2d: ', np.mean(iou2d))
     print('IOU3d: ', np.mean(iou3d))
     '''
-    recall = compute_proposal_recall(proposal_boxes, gt_boxes, nms_indices)
-    print('Average recall: ', recall)
-    print(tp, fp, fn)
-    for c in ['Car', 'Pedestrian', 'Cyclist']:
-        if (tp[c]+fn[c] == 0) or (tp[c]+fp[c]) == 0:
-            continue
-        print(c + ' segmentation recall: %f'% \
-            (float(tp[c])/(tp[c]+fn[c])))
-        print(c + ' segmentation precision: %f'% \
-            (float(tp[c])/(tp[c]+fp[c])))
+    if split in ['train', 'val']:
+        recall = compute_proposal_recall(proposal_boxes, gt_boxes, nms_indices)
+        print('Average recall: ', recall)
+        print(tp, fp, fn)
+        for c in ['Car', 'Pedestrian', 'Cyclist']:
+            if (tp[c]+fn[c] == 0) or (tp[c]+fp[c]) == 0:
+                continue
+            print(c + ' segmentation recall: %f'% \
+                (float(tp[c])/(tp[c]+fn[c])))
+            print(c + ' segmentation precision: %f'% \
+                (float(tp[c])/(tp[c]+fp[c])))
 
 if __name__ == "__main__":
     log_string('pid: %s'%(str(os.getpid())))
     #TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', types=['Car'], difficulties=[1])
-    test(SPLIT)
+    test(SPLIT, save_result=True)
