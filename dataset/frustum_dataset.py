@@ -160,11 +160,11 @@ class FrustumDataset(object):
             '''
             # downsample
             car_idxs = random.sample(car_idxs, int(len(car_idxs) * 0.5))
-            '''
             # oversample
             cyclist_idxs = cyclist_idxs * 10
             pedestrian_idxs = pedestrian_idxs * 5
             pos_idxs = car_idxs + cyclist_idxs + pedestrian_idxs
+            '''
 
             need_neg = int(len(pos_idxs) * ((1-pos_ratio)/pos_ratio))
             keep_idxs = pos_idxs + neg_idxs[:need_neg]

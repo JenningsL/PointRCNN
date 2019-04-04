@@ -41,6 +41,7 @@ parser.add_argument('--restore_model_path', default=None, help='Restore model pa
 parser.add_argument('--pos_ratio', type=float, default=0.5, help='Positive proposal ratio')
 parser.add_argument('--train_cls_only', type=int, default=0, help='Train classification only')
 parser.add_argument('--train_reg_only', type=int, default=0, help='Train box regression only')
+parser.add_argument('--use_gt_prop', type=int, default=0, help='Use label to generate proposal or not')
 FLAGS = parser.parse_args()
 
 # Set training configurations
@@ -73,10 +74,10 @@ BN_DECAY_CLIP = 0.99
 # load data set in background thread, remember to join data_loading_thread somewhere
 TRAIN_DATASET = FrustumDataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', BATCH_SIZE, 'train',
              data_dir='./rcnn_data',
-             augmentX=5, random_shift=True, rotate_to_center=True, random_flip=True, use_gt_prop=True)
+             augmentX=5, random_shift=True, rotate_to_center=True, random_flip=True, use_gt_prop=FLAGS.use_gt_prop)
 TEST_DATASET = FrustumDataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', BATCH_SIZE, 'val',
              data_dir='./rcnn_data',
-             augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, use_gt_prop=True)
+             augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, use_gt_prop=FLAGS.use_gt_prop)
 train_loading_thread = Thread(target=TRAIN_DATASET.load_buffer_repeatedly, args=(FLAGS.pos_ratio, False))
 val_loading_thread = Thread(target=TEST_DATASET.load_buffer_repeatedly, args=(FLAGS.pos_ratio, True))
 train_loading_thread.start()
@@ -429,7 +430,7 @@ def eval_one_epoch(sess, ops, test_writer):
                      ops['heading_residual_label_pl']: batch_hres,
                      ops['size_class_label_pl']: batch_sclass,
                      ops['size_residual_label_pl']: batch_sres,
-                     ops['is_training_pl']: is_training}
+                     ops['is_training_pl']: is_training or FLAGS.train_reg_only}
 
         summary, step, loss_val, loss_endpoints, cls_logits_val, logits_val, iou2ds, iou3ds = \
             sess.run([ops['merged'], ops['step'],
