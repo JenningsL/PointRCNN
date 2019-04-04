@@ -37,7 +37,8 @@ parser.add_argument('--model', default='frustum_pointnets_v1', help='Model name 
 parser.add_argument('--model_path', default='log/model.ckpt', help='model checkpoint file path [default: log/model.ckpt]')
 parser.add_argument('--batch_size', type=int, default=32, help='batch size for inference [default: 32]')
 parser.add_argument('--output', default='test_results', help='output file/folder name [default: test_results]')
-parser.add_argument('--data_path', default=None, help='frustum dataset pickle filepath [default: None]')
+parser.add_argument('--kitti_path', default='/data/ssd/public/jlliu/Kitti/object', help='Kitti root path')
+parser.add_argument('--split', default='val', help='Data split to use [default: val]')
 # parser.add_argument('--from_rgb_detection', action='store_true', help='test from dataset files from rgb detection.')
 parser.add_argument('--idx_path', default=None, help='filename of txt where each line is a data idx, used for rgb detection -- write <id>.txt for all frames. [default: None]')
 parser.add_argument('--dump_result', action='store_true', help='If true, also dump results to .pickle file')
@@ -51,11 +52,11 @@ NUM_POINT = FLAGS.num_point
 MODEL = importlib.import_module(FLAGS.model)
 # NUM_CLASSES = 2
 
-TEST_DATASET = FrustumDataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', BATCH_SIZE, 'val',
-             save_dir='/data/ssd/public/jlliu/frustum-pointnets/train/rpn_dataset_car_people/val',
+TEST_DATASET = FrustumDataset(NUM_POINT, FLAGS.kitti_path, BATCH_SIZE, FLAGS.split,
+             data_dir='./rcnn_data_'+FLAGS.split,
              augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, use_gt_prop=False)
 
-kitti_dataset = kitti_object('/data/ssd/public/jlliu/Kitti/object')
+kitti_dataset = TEST_DATASET.kitti_dataset
 
 def get_session_and_ops(batch_size, num_point):
     ''' Define model graph, load model parameters,

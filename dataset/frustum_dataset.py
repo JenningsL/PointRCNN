@@ -79,7 +79,7 @@ class Sample(object):
 
 
 class FrustumDataset(object):
-    def __init__(self, npoints, kitti_path, batch_size, split, save_dir,
+    def __init__(self, npoints, kitti_path, batch_size, split, data_dir,
                  augmentX=1, random_shift=False, rotate_to_center=False, random_flip=False,
                  use_gt_prop=False):
         self.npoints = npoints
@@ -87,24 +87,22 @@ class FrustumDataset(object):
         self.random_flip = random_flip
         self.rotate_to_center = rotate_to_center
         self.kitti_path = kitti_path
-        self.kitti_dataset = kitti_object(kitti_path, 'training')
-        self.save_dir = save_dir
-        self.data_dir = os.path.join('./rcnn_data')
+        self.data_dir = data_dir
         self.split = split
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
         self.use_gt_prop = use_gt_prop
         #self.num_channel = 7
         self.num_channel = 4
-        # rpn_output_path = os.path.join(kitti_path, 'training/proposal_car_people')
-        # def is_prop_file(f):
-        #     return os.path.isfile(os.path.join(rpn_output_path, f)) and not '_roi' in f
-        # proposal_files = [f for f in os.listdir(rpn_output_path) if is_prop_file(f)]
-        # self.frame_ids = map(lambda x: x.replace('.txt', ''), proposal_files)
-        # self.frame_ids = list(set(self.load_split_ids(split)).intersection(self.frame_ids))
-        self.frame_ids = self.load_split_ids(split)
-        # self.frame_ids = self.frame_ids[:5]
-        random.shuffle(self.frame_ids)
+        self.is_testing = split in ['train', 'val']
+        if not self.is_testing:
+            self.kitti_dataset = kitti_object(kitti_path, 'training')
+            self.frame_ids = self.load_split_ids(split)
+            random.shuffle(self.frame_ids)
+        else:
+            self.kitti_dataset = kitti_object_video(
+                os.path.join(kitti_path, 'image_02/data'),
+                os.path.join(kitti_path, 'velodyne_points/data'),
+                kitti_path)
+            self.frame_ids = range(self.kitti_dataset.num_samples)
         self.cur_batch = -1
         self.load_progress = 0
         self.batch_size = batch_size
@@ -115,9 +113,6 @@ class FrustumDataset(object):
         self.last_sample_id = None
 
         self.sample_buffer = Queue(maxsize=1024)
-
-        # roi_features of the first positive proposal, for generating proposal from label
-        self.roi_feature_ = {}
 
     def get_proposals(self, rpn_out):
         proposals = []
@@ -140,63 +135,14 @@ class FrustumDataset(object):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
             return [line.rstrip('\n') for line in f]
 
-    def preprocess(self):
-        start = time.time()
-        npoints = 0
-        obj_points = 0
-        pos_count = 0
-        neg_count = 0
-        recall = 0
-        has_obj_count = 0
-        avg_iou = []
-        type_count = {t: 0 for t in type_whitelist if t != 'NonObject'}
-        self._load_proposals('rpn_out_{0}.pkl'.format(self.split))
-        for frame_id in self.frame_ids:
-            frame_data = self.load_frame_data(frame_id)
-            for sample in frame_data['samples']:
-                if sample.cls_label != g_type2onehotclass['NonObject']:
-                    type_count[g_class2type[sample.cls_label]] += 1
-            if 'recall' in frame_data:
-                has_obj_count += 1
-                recall += frame_data['recall']
-            if 'avg_iou' in frame_data:
-                avg_iou += frame_data['avg_iou']
-            with open(os.path.join(self.save_dir, frame_id+'.pkl'), 'wb') as f:
-                pickle.dump(frame_data, f)
-            print('preprocess progress: {}/{}'.format(self.load_progress, len(self.frame_ids)))
-            for i in frame_data['pos_idxs']:
-                npoints += len(frame_data['samples'][i].seg_label)
-                obj_points += np.sum(frame_data['samples'][i].seg_label)
-            pos_count += len(frame_data['pos_idxs'])
-            neg_count += len(frame_data['samples']) - len(frame_data['pos_idxs'])
-        print('preprocess done, cost time: {}'.format(time.time() - start))
-        print('pos: {}, neg: {}'.format(pos_count, neg_count))
-        print('sample of each class: ', type_count)
-        print('recall: {}'.format(recall/has_obj_count))
-        print('Avg iou: {}'.format(np.mean(avg_iou)))
-        print('Avg points: {}, pos_ratio: {}'.format(npoints/pos_count, obj_points/npoints))
-
-    def group_overlaps(self, objs, calib, iou_thres=0.01):
-        bev_boxes = map(lambda obj: utils.compute_box_3d(obj, calib.P)[1][:4, [0,2]], objs)
-        groups = []
-        candidates = range(len(objs))
-        while len(candidates) > 0:
-            idx = candidates[0]
-            group = [idx]
-            for i in candidates[1:]:
-                if get_iou(bev_boxes[idx], bev_boxes[i]) >= iou_thres:
-                    group.append(i)
-            for j in group:
-                candidates.remove(j)
-            groups.append(map(lambda i: objs[i], group))
-            # groups.append(group)
-        return groups
-
     def do_sampling(self, frame_data, pos_ratio=0.5, is_eval=False):
+        if self.is_testing:
+            return frame_data['samples']
         samples = frame_data['samples']
         pos_idxs = frame_data['pos_idxs']
         neg_idxs = [i for i in range(0, len(samples)) if i not in pos_idxs]
         random.shuffle(neg_idxs)
+
         if is_eval:
             need_neg = int(len(neg_idxs) * 0.5)
             #need_neg = len(neg_idxs)
@@ -233,7 +179,7 @@ class FrustumDataset(object):
                 n += 1
         kept_samples = [samples[i] for i in keep_idxs]
 
-        # data augmentation
+        # Data augmentation
         for sample in kept_samples:
             if self.random_flip:
                 sample.random_flip()
@@ -307,15 +253,8 @@ class FrustumDataset(object):
                 choice = np.random.choice(sample.point_set.shape[0], self.npoints, replace=True)
                 point_set = sample.point_set[choice, 0:self.num_channel]
                 seg_label = sample.seg_label[choice]
-            box3d_center = copy.deepcopy(sample.box3d_center)
-            # Data Augmentation
-            if self.random_shift:
-                dist = np.sqrt(np.sum(box3d_center[0]**2+box3d_center[1]**2))
-                shift = np.clip(np.random.randn()*dist*0.05, dist*0.8, dist*1.2)
-                point_set[:,2] += shift
-                box3d_center[2] += shift
             batch_data[i,...] = point_set
-            batch_center[i,:] = box3d_center
+            batch_center[i,:] = sample.box3d_center
             batch_cls_label[i] = sample.cls_label
             batch_ious[i] = sample.iou
             batch_label[i,:] = seg_label
@@ -503,7 +442,6 @@ class FrustumDataset(object):
             print(e)
             return {'samples': [], 'pos_idxs': []}
         calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
-        objects = self.kitti_dataset.get_label_objects(data_idx)
         image = self.kitti_dataset.get_image(data_idx)
         pc_velo = self.kitti_dataset.get_lidar(data_idx)
         img_height, img_width = image.shape[0:2]
@@ -520,6 +458,10 @@ class FrustumDataset(object):
         pc_rect[:,3] = pc_velo[:,3]
         gt_boxes_xy = []
         gt_boxes_3d = []
+        if not self.is_testing:
+            objects = self.kitti_dataset.get_label_objects(data_idx)
+        else:
+            objects = []
         objects = filter(lambda obj: obj.type in type_whitelist, objects)
         for obj in objects:
             _, gt_corners_3d = utils.compute_box_3d(obj, calib.P)
@@ -528,6 +470,7 @@ class FrustumDataset(object):
         recall = np.zeros((len(objects),))
 
         if self.use_gt_prop:
+            assert(self.is_testing==False)
             proposals = self.get_proposals_from_label(objects, calib)
         else:
             proposals = self.get_proposals(rpn_out)
@@ -543,7 +486,12 @@ class FrustumDataset(object):
             if prop_corners_image_2d is None:
                 # print('skip proposal behind camera')
                 continue
-
+            # testing
+            if self.is_testing:
+                sample = self.get_one_sample(prop, pc_rect, image, calib, -1, None, None, data_idx_str, img_seg_map)
+                if sample:
+                    samples.append(sample)
+            # training
             prop_box_xy = prop_corners_3d[:4, [0,2]]
             # find corresponding label object
             obj_idx, iou_with_gt = self.find_match_label(prop_box_xy, gt_boxes_xy)
@@ -559,8 +507,6 @@ class FrustumDataset(object):
             elif iou_with_gt >= 0.5 \
                 or (iou_with_gt >= 0.45 and objects[obj_idx].type in ['Pedestrian', 'Cyclist']):
                 obj_type = objects[obj_idx].type
-                if self.roi_feature_.get(obj_type) is None:
-                    self.roi_feature_[obj_type] = prop_.roi_features
                 avg_iou.append(iou_with_gt)
 
                 sample = self.get_one_sample(prop, pc_rect, image, calib, iou_with_gt, gt_boxes_3d[obj_idx], objects[obj_idx], data_idx_str, img_seg_map)
@@ -616,7 +562,7 @@ if __name__ == '__main__':
     else:
         augmentX = 1
         use_gt_prop = False
-    dataset = FrustumDataset(512, kitti_path, 16, split, save_dir='./dataset_car_people/'+split,
+    dataset = FrustumDataset(512, kitti_path, 16, split, data_dir='./rcnn_data_'+split,
                  augmentX=augmentX, random_shift=True, rotate_to_center=True, random_flip=True,
                  use_gt_prop=use_gt_prop)
     #dataset.preprocess()
