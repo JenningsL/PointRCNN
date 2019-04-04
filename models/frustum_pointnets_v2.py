@@ -44,7 +44,6 @@ def get_proposal_cls_net(point_cloud, img_seg_map, proposal_boxes, calib, is_tra
         proposal_boxes,
         calib, _img_pixel_size)
     # crop and resize
-    '''
     # y1, x1, y2, x2
     box2d_corners_norm_reorder = tf.stack([
         tf.gather(box2d_corners_norm, 1, axis=-1),
@@ -67,6 +66,7 @@ def get_proposal_cls_net(point_cloud, img_seg_map, proposal_boxes, calib, is_tra
     img_rois = roi_pooling(img_seg_map, roi_crops, pool_height=16, pool_width=16)
     img_rois.set_shape([batch_size, 16, 16])
     #print(img_rois.shape)
+    '''
 
     img_feats = tf.reshape(img_rois, [batch_size, -1])
     end_points['img_rois'] = img_feats
@@ -74,9 +74,9 @@ def get_proposal_cls_net(point_cloud, img_seg_map, proposal_boxes, calib, is_tra
     # classification
     point_feats = tf.reshape(l3_points, [batch_size, -1])
     # use image only
-    cls_net = img_feats
+    #cls_net = img_feats
     # use point and image feature
-    #cls_net = tf.concat([point_feats, img_feats], axis=1)
+    cls_net = tf.concat([point_feats, img_feats], axis=1)
     # use point only
     #cls_net = point_feats
     cls_net = tf_util.fully_connected(cls_net, 512, bn=True, is_training=is_training, scope='cls_fc1', bn_decay=bn_decay)
