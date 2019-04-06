@@ -145,7 +145,7 @@ def test(split, save_result=False):
         img_seg_binary = np.zeros((BATCH_SIZE, NUM_POINT, 2))
         img_seg_binary[...,0] = img_seg_logits[...,0]
         img_seg_binary[...,1] = np.sum(img_seg_logits[...,1:], axis=-1)
-        img_seg_binary *= np.array([1, 1]) # weights
+        img_seg_binary *= np.array([0, 1]) # weights
         feed_dict[pls['img_seg_softmax']] = img_seg_binary
         '''
         # label to one_hot

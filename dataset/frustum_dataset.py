@@ -407,11 +407,11 @@ class FrustumDataset(object):
         mlab.plot3d([0, box2d_center_rect[0][0]], [0, box2d_center_rect[0][1]], [0, box2d_center_rect[0][2]], color=(1,1,1), tube_radius=None, figure=fig)
         raw_input()
 
-    def get_proposals_from_label(self, labels, calib):
+    def get_proposals_from_label(self, labels, calib, augmentX):
         '''construct proposal from label'''
         proposals = []
         for label in labels:
-            for _ in range(self.augmentX):
+            for _ in range(augmentX):
                 prop = ProposalObject(list(label.t) + [label.l, label.h, label.w, label.ry], 1.0, label.type, None)
                 prop = random_shift_box3d(prop)
                 proposals.append(prop)
@@ -471,9 +471,12 @@ class FrustumDataset(object):
 
         if self.use_gt_prop:
             assert(self.is_testing==False)
-            proposals = self.get_proposals_from_label(objects, calib)
+            proposals = self.get_proposals_from_label(objects, calib, self.augmentX)
         else:
             proposals = self.get_proposals(rpn_out)
+            # add more training samples
+            if self.split == 'train':
+                proposals += self.get_proposals_from_label(objects, calib, 1)
 
         samples = []
         pos_idxs = []
