@@ -304,6 +304,11 @@ class FrustumDataset(object):
             print('skip proposal behind camera')
             return False
         # get points within proposal box
+        # expand proposal
+        proposal_expand = copy.deepcopy(proposal)
+        proposal_expand.l += 0.5
+        proposal_expand.w += 0.5
+        _, prop_corners_3d = utils.compute_box_3d(proposal_expand, calib.P)
         _,prop_inds = extract_pc_in_box3d(pc_rect, prop_corners_3d)
         pc_in_prop_box = pc_rect[prop_inds,:]
         seg_mask = np.zeros((pc_in_prop_box.shape[0]))
@@ -312,16 +317,8 @@ class FrustumDataset(object):
             return False
 
         # Get frustum angle
-        image_points = calib.project_rect_to_image(pc_in_prop_box[:,:3])
-        expand_image_points = np.concatenate((prop_corners_image_2d, image_points), axis=0)
-        xmin, ymin = expand_image_points.min(0)
-        xmax, ymax = expand_image_points.max(0)
-        # TODO: frustum angle is important, make use of image
-        # use gt angle for testing
-        # if gt_object is not None:
-        #     xmin,ymin,xmax,ymax = gt_object.box2d
+        box2d_center = calib.project_rect_to_image(np.array([proposal.t]))[0]
 
-        box2d_center = np.array([(xmin+xmax)/2.0, (ymin+ymax)/2.0])
         uvdepth = np.zeros((1,3))
         uvdepth[0,0:2] = box2d_center
         uvdepth[0,2] = 20 # some random depth

@@ -237,8 +237,8 @@ def train():
             sys.stdout.flush()
 
             train_one_epoch(sess, ops, train_writer)
-            #if epoch % 3 == 0:
-            val_loss, avg_cls_acc, estimate_acc = eval_one_epoch(sess, ops, test_writer)
+            if epoch >= 10:
+                val_loss, avg_cls_acc, estimate_acc = eval_one_epoch(sess, ops, test_writer)
             # Save the variables to disk.
             # if val_loss < best_val_loss:
             #     best_val_loss = val_loss
