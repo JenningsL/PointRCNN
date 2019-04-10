@@ -24,7 +24,7 @@ from provider import *
 from shapely.geometry import Polygon, MultiPolygon
 from Queue import Queue
 from sklearn.neighbors import KDTree
-
+from nms_rotate import nms_rotate_cpu
 
 def is_near(prop1, prop2):
     c1 = np.array(prop1.t)
@@ -116,9 +116,18 @@ class FrustumDataset(object):
 
     def get_proposals(self, rpn_out):
         proposals = []
-        for ind in rpn_out['nms_indices']:
-            if ind == -1:
-                continue
+        if self.split == 'train':
+            nms_thres = 0.7
+            max_keep = 100
+        else:
+            nms_thres = 0.8
+            max_keep = 50
+        bev_boxes = []
+        for ry, center, size in zip(rpn_out['angles'], rpn_out['centers'], rpn_out['sizes']):
+            bev_boxes.append([center[0], center[2], size[0], size[2], 180*ry/np.pi])
+        bev_boxes = np.array(bev_boxes)
+        nms_idx = nms_rotate_cpu(bev_boxes, rpn_out['scores'], nms_thres, max_keep)
+        for ind in nms_idx:
             # to ProposalObject
             x,y,z = rpn_out['centers'][ind]
             l, h, w = rpn_out['sizes'][ind]
@@ -126,10 +135,6 @@ class FrustumDataset(object):
             proposal = ProposalObject(np.array([x,y,z,l, h, w, ry]))
             proposals.append(proposal)
         return proposals
-        # if data_idx in self.proposals:
-        #     return self.proposals[data_idx]
-        # else:
-        #     return []
 
     def load_split_ids(self, split):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
@@ -504,7 +509,7 @@ class FrustumDataset(object):
                 if sample:
                     samples.append(sample)
                     neg_box.append(prop_corners_3d)
-            elif iou_with_gt >= 0.5 \
+            elif iou_with_gt >= 0.55 \
                 or (iou_with_gt >= 0.45 and objects[obj_idx].type in ['Pedestrian', 'Cyclist']):
                 obj_type = objects[obj_idx].type
                 avg_iou.append(iou_with_gt)
