@@ -23,6 +23,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 from frustum_model_util import NUM_SEG_CLASSES, NUM_OBJ_CLASSES, g_type2onehotclass, NUM_CHANNEL
 from frustum_dataset import FrustumDataset, Sample
 import provider
+from frustum_pointnets_v2 import FrustumPointNet
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
@@ -114,12 +115,12 @@ def train():
     best_avg_cls_acc = 0
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            pointclouds_pl, img_seg_map_pl, prop_box_pl, calib_pl, cls_labels_pl, ious_pl, labels_pl, centers_pl, \
-            heading_class_label_pl, heading_residual_label_pl, \
-            size_class_label_pl, size_residual_label_pl = \
-                MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
+            # pointclouds_pl, img_seg_map_pl, prop_box_pl, calib_pl, cls_labels_pl, ious_pl, labels_pl, centers_pl, \
+            # heading_class_label_pl, heading_residual_label_pl, \
+            # size_class_label_pl, size_residual_label_pl = \
+            #     MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
 
-            is_training_pl = tf.placeholder(tf.bool, shape=())
+            # is_training_pl = tf.placeholder(tf.bool, shape=())
 
             # Note the global_step=batch parameter to minimize.
             # That tells the optimizer to increment the 'batch' parameter
@@ -130,11 +131,15 @@ def train():
             tf.summary.scalar('bn_decay', bn_decay)
 
             # Get model and losses
-            end_points = MODEL.get_model(pointclouds_pl, cls_labels_pl, img_seg_map_pl,
-                prop_box_pl, calib_pl, is_training_pl, bn_decay=bn_decay)
-            loss, loss_endpoints = MODEL.get_loss(cls_labels_pl, ious_pl, labels_pl, centers_pl,
-                heading_class_label_pl, heading_residual_label_pl,
-                size_class_label_pl, size_residual_label_pl, end_points)
+            frustum_pointnet = FrustumPointNet(BATCH_SIZE, NUM_POINT, bn_decay)
+            end_points = frustum_pointnet.end_points
+            pls = frustum_pointnet.placeholders
+            loss, loss_endpoints = frustum_pointnet.get_loss()
+            # end_points = MODEL.get_model(pointclouds_pl, cls_labels_pl, img_seg_map_pl,
+            #     prop_box_pl, calib_pl, is_training_pl, bn_decay=bn_decay)
+            # loss, loss_endpoints = MODEL.get_loss(cls_labels_pl, ious_pl, labels_pl, centers_pl,
+            #     heading_class_label_pl, heading_residual_label_pl,
+            #     size_class_label_pl, size_residual_label_pl, end_points)
             tf.summary.scalar('loss', loss)
 
             losses = tf.get_collection('losses')
@@ -209,19 +214,19 @@ def train():
         else:
             saver.restore(sess, FLAGS.restore_model_path)
 
-        ops = {'pointclouds_pl': pointclouds_pl,
-               'img_seg_map_pl': img_seg_map_pl,
-               'prop_box_pl': prop_box_pl,
-               'calib_pl': calib_pl,
-               'cls_label_pl': cls_labels_pl,
-               'ious_pl': ious_pl,
-               'labels_pl': labels_pl,
-               'centers_pl': centers_pl,
-               'heading_class_label_pl': heading_class_label_pl,
-               'heading_residual_label_pl': heading_residual_label_pl,
-               'size_class_label_pl': size_class_label_pl,
-               'size_residual_label_pl': size_residual_label_pl,
-               'is_training_pl': is_training_pl,
+        ops = {'pointclouds_pl': pls['pointclouds'],
+               'img_seg_map_pl': pls['img_seg'],
+               'prop_box_pl': pls['prop_box'],
+               'calib_pl': pls['calib'],
+               'cls_label_pl': pls['cls_label'],
+               'ious_pl': pls['ious'],
+               'labels_pl': pls['seg_labels'],
+               'centers_pl': pls['centers'],
+               'heading_class_label_pl': pls['heading_class_label'],
+               'heading_residual_label_pl': pls['heading_residual_label'],
+               'size_class_label_pl': pls['size_class_label'],
+               'size_residual_label_pl': pls['size_residual_label'],
+               'is_training_pl': pls['is_training'],
                'logits': end_points['mask_logits'],
                'cls_logits': end_points['cls_logits'],
                'centers_pred': end_points['center'],
@@ -255,15 +260,6 @@ def train_one_epoch(sess, ops, train_writer, idxs_to_use=None):
     '''
     is_training = True
     log_string(str(datetime.now()))
-
-    # Shuffle train samples
-    # if not idxs_to_use:
-    #     train_idxs = np.arange(0, len(TRAIN_DATASET))
-    # else:
-    #     log_string('Training with classification hard samples.')
-    #     train_idxs = idxs_to_use
-    # np.random.shuffle(train_idxs)
-    # num_batches = len(train_idxs)/BATCH_SIZE
 
     # To collect statistics
     total_cls_correct = 0
@@ -474,16 +470,6 @@ def eval_one_epoch(sess, ops, test_writer):
         num_batches += 1
         if is_last_batch:
             break
-        # for i in range(BATCH_SIZE):
-        #     segp = preds_val[i,:]
-        #     segl = batch_label[i,:]
-        #     part_ious = [0.0 for _ in range(NUM_SEG_CLASSES)]
-        #     for l in range(NUM_SEG_CLASSES):
-        #         if (np.sum(segl==l) == 0) and (np.sum(segp==l) == 0):
-        #             part_ious[l] = 1.0 # class not present
-        #         else:
-        #             part_ious[l] = np.sum((segl==l) & (segp==l)) / \
-        #                 float(np.sum((segl==l) | (segp==l)))
 
     log_string('eval mean loss: %f' % (loss_sum / float(num_batches)))
     log_string('classification accuracy: %f' % \

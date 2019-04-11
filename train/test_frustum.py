@@ -29,6 +29,7 @@ from frustum_dataset import FrustumDataset, Sample
 import provider
 from kitti_object import *
 import kitti_util as utils
+from frustum_pointnets_v2 import FrustumPointNet
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
@@ -49,7 +50,6 @@ BATCH_SIZE = FLAGS.batch_size
 MODEL_PATH = FLAGS.model_path
 GPU_INDEX = FLAGS.gpu
 NUM_POINT = FLAGS.num_point
-MODEL = importlib.import_module(FLAGS.model)
 # NUM_CLASSES = 2
 
 TEST_DATASET = FrustumDataset(NUM_POINT, FLAGS.kitti_path, BATCH_SIZE, FLAGS.split,
@@ -58,19 +58,15 @@ TEST_DATASET = FrustumDataset(NUM_POINT, FLAGS.kitti_path, BATCH_SIZE, FLAGS.spl
 
 kitti_dataset = TEST_DATASET.kitti_dataset
 
-def get_session_and_ops(batch_size, num_point):
+def get_session_and_model():
     ''' Define model graph, load model parameters,
     create session and return session handle and tensors
     '''
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            pointclouds_pl, img_seg_map_pl, prop_box_pl, calib_pl, cls_labels_pl, ious_pl, labels_pl, centers_pl, \
-            heading_class_label_pl, heading_residual_label_pl, \
-            size_class_label_pl, size_residual_label_pl = \
-                MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
-            is_training_pl = tf.placeholder(tf.bool, shape=())
-            end_points = MODEL.get_model(pointclouds_pl, cls_labels_pl, img_seg_map_pl,
-                prop_box_pl, calib_pl, is_training_pl)
+            frustum_pointnet = FrustumPointNet(BATCH_SIZE, NUM_POINT)
+            placeholders = frustum_pointnet.placeholders
+            end_points = frustum_pointnet.end_points
             saver = tf.train.Saver()
 
         # Create a session
@@ -81,19 +77,7 @@ def get_session_and_ops(batch_size, num_point):
 
         # Restore variables from disk.
         saver.restore(sess, MODEL_PATH)
-        ops = {'pointclouds_pl': pointclouds_pl,
-               'img_seg_map_pl': img_seg_map_pl,
-               'prop_box_pl': prop_box_pl,
-               'calib_pl': calib_pl,
-               'cls_label_pl': cls_labels_pl,
-               'centers_pl': centers_pl,
-               'is_training_pl': is_training_pl,
-               'logits': end_points['mask_logits'],
-               'cls_logits': end_points['cls_logits'],
-               'center': end_points['center'],
-               'end_points': end_points,
-               }
-        return sess, ops
+    return sess, frustum_pointnet
 
 def softmax(x):
     ''' Numpy function for softmax'''
@@ -102,18 +86,19 @@ def softmax(x):
     probs /= np.sum(probs, axis=len(shape)-1, keepdims=True)
     return probs
 
-def inference(sess, ops, pc, img_seg_map, prop_box, calib, cls_label):
+def inference(sess, model, pc, img_seg_map, prop_box, calib, cls_label):
     ''' Run inference for frustum pointnets in batch mode '''
     assert pc.shape[0] == BATCH_SIZE
 
-    ep = ops['end_points']
+    ep = model.end_points
+    pls = model.placeholders
 
-    feed_dict = {ops['pointclouds_pl']: pc,
-                 ops['img_seg_map_pl']: img_seg_map,
-                 ops['prop_box_pl']: prop_box,
-                 ops['calib_pl']: calib,
-                 ops['cls_label_pl']: cls_label,
-                 ops['is_training_pl']: False}
+    feed_dict = {pls['pointclouds']: pc,
+                 pls['img_seg_map']: img_seg_map,
+                 pls['prop_box']: prop_box,
+                 pls['calib']: calib,
+                 pls['cls_label']: cls_label,
+                 pls['is_training']: False}
     cls_logits, logits, centers, \
     heading_logits, heading_residuals, \
     size_logits, size_residuals = \
@@ -267,21 +252,6 @@ def nms_on_bev(objects, iou_threshold=0.1):
             final_result[frame_id].append(keep)
     return final_result
 
-def find_match_label(prop_corners, labels_corners):
-    labels = map(lambda corners: Polygon(corners), labels_corners)
-    target = Polygon(prop_corners)
-    largest_iou = 0
-    largest_idx = -1
-    for i, label in enumerate(labels):
-	area1 = label.area
-	area2 = target.area
-	intersection = target.intersection(label).area
-	iou = intersection / (area1 + area2 - intersection)
-	if iou > largest_iou:
-            largest_iou = iou
-            largest_idx = i
-    return largest_idx, largest_iou
-
 def test(output_filename, result_dir=None):
     ''' Test frustum pointents with 2D boxes from a RGB detector.
     Write test results to KITTI format label files.
@@ -307,22 +277,12 @@ def test(output_filename, result_dir=None):
     total_fp = 0
     total_fn = 0
 
-    sess, ops = get_session_and_ops(batch_size=BATCH_SIZE, num_point=NUM_POINT)
+    sess, model = get_session_and_model()
     # for batch_idx in range(num_batches):
     batch_idx = 0
     # TODO: return frame_id_list in get_next_batch
     while(True):
-        batch_data, batch_cls_label, batch_ious, batch_label, batch_center, \
-        batch_hclass, batch_hres, \
-        batch_sclass, batch_sres, \
-        batch_rot_angle, batch_img_seg_map, batch_prop_box, batch_calib, batch_frame_ids, \
-        batch_proposal_score, is_last_batch = TEST_DATASET.get_next_batch()
-
-        if is_last_batch and len(batch_data) != BATCH_SIZE:
-            # discard last batch with fewer data
-            break
-        #if batch_idx > 1000:
-        #    break
+        batch_data, is_last_batch = TEST_DATASET.get_next_batch()
         print('batch idx: %d' % (batch_idx))
         batch_idx += 1
 
@@ -330,11 +290,12 @@ def test(output_filename, result_dir=None):
     	batch_cls, batch_center_pred, \
             batch_hclass_pred, batch_hres_pred, \
             batch_sclass_pred, batch_sres_pred, batch_scores, batch_prob = \
-            inference(sess, ops, batch_data, batch_img_seg_map, batch_prop_box, batch_calib, batch_cls_label)
+            inference(sess, model, batch_data['pointcloud'], batch_data['img_seg_map'],
+            batch_data['prop_box'], batch_data['calib'], batch_data['cls_label'])
 
-        tp = np.sum(np.logical_and(batch_cls == batch_cls_label, batch_cls_label < g_type2onehotclass['NonObject']))
-        fp = np.sum(np.logical_and(batch_cls != batch_cls_label, batch_cls_label == g_type2onehotclass['NonObject']))
-        fn = np.sum(np.logical_and(batch_cls != batch_cls_label, batch_cls_label < g_type2onehotclass['NonObject']))
+        tp = np.sum(np.logical_and(batch_cls == batch_data['cls_label'], batch_data['cls_label'] < g_type2onehotclass['NonObject']))
+        fp = np.sum(np.logical_and(batch_cls != batch_data['cls_label'], batch_data['cls_label'] == g_type2onehotclass['NonObject']))
+        fn = np.sum(np.logical_and(batch_cls != batch_data['cls_label'], batch_data['cls_label'] < g_type2onehotclass['NonObject']))
         total_tp += tp
         total_fp += fp
         total_fn += fn
@@ -354,6 +315,8 @@ def test(output_filename, result_dir=None):
             prob_list.append(batch_prob[i])
             proposal_score_list.append(batch_proposal_score[i])
         frame_id_list += map(lambda fid: int(fid), batch_frame_ids)
+        if is_last_batch:
+            break
 
     type_list = map(lambda i: type_whitelist[i], cls_list)
 

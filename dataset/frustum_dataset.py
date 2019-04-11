@@ -231,22 +231,23 @@ class FrustumDataset(object):
                 break
 
         bsize = len(samples) # note that bsize can be smaller than self.batch_size
-        batch_data = np.zeros((bsize, self.npoints, self.num_channel))
-        batch_cls_label = np.zeros((bsize,), dtype=np.int32)
-        batch_ious = np.zeros((bsize,), dtype=np.float32)
-        batch_label = np.zeros((bsize, self.npoints), dtype=np.int32)
-        batch_center = np.zeros((bsize, 3))
-        batch_heading_class = np.zeros((bsize,), dtype=np.int32)
-        batch_heading_residual = np.zeros((bsize,))
-        batch_size_class = np.zeros((bsize,), dtype=np.int32)
-        batch_size_residual = np.zeros((bsize, 3))
-        batch_rot_angle = np.zeros((bsize,))
-        batch_img_seg_map = np.zeros((bsize, 360, 1200, 4), dtype=np.float32)
-        batch_prop_box = np.zeros((bsize, 7), dtype=np.float32)
-        batch_calib = np.zeros((bsize, 3, 4), dtype=np.float32)
-        #batch_feature_vec = np.zeros((bsize, 3136))
-        frame_ids = []
-        batch_proposal_score = np.zeros((bsize,), dtype=np.float32)
+        batch_data = {
+            'ids': [],
+            'pointcloud': np.zeros((bsize, self.npoints, self.num_channel)),
+            'cls_label': np.zeros((bsize,), dtype=np.int32),
+            'ious': np.zeros((bsize,), dtype=np.float32),
+            'seg_label': np.zeros((bsize, self.npoints), dtype=np.int32),
+            'center': np.zeros((bsize, 3)),
+            'heading_class': np.zeros((bsize,), dtype=np.int32),
+            'heading_residual': np.zeros((bsize,)),
+            'size_class': np.zeros((bsize,), dtype=np.int32),
+            'size_residual': np.zeros((bsize, 3)),
+            'rot_angle': np.zeros((bsize,)),
+            'img_seg_map': np.zeros((bsize, 360, 1200, 4), dtype=np.float32),
+            'prop_box': np.zeros((bsize, 7), dtype=np.float32),
+            'proposal_score': np.zeros((bsize,), dtype=np.float32),
+            'calib': np.zeros((bsize, 3, 4), dtype=np.float32)
+        }
         for i in range(bsize):
             sample = samples[i]
             assert(sample.point_set.shape[0] == sample.seg_label.shape[0])
@@ -258,25 +259,22 @@ class FrustumDataset(object):
                 choice = np.random.choice(sample.point_set.shape[0], self.npoints, replace=True)
                 point_set = sample.point_set[choice, 0:self.num_channel]
                 seg_label = sample.seg_label[choice]
-            batch_data[i,...] = point_set
-            batch_center[i,:] = sample.box3d_center
-            batch_cls_label[i] = sample.cls_label
-            batch_ious[i] = sample.iou
-            batch_label[i,:] = seg_label
-            batch_heading_class[i] = sample.angle_class
-            batch_heading_residual[i] = sample.angle_residual
-            batch_size_class[i] = sample.size_class
-            batch_size_residual[i] = sample.size_residual
-            batch_rot_angle[i] = sample.rot_angle
-            batch_img_seg_map[i] = sample.img_seg_map
-            frame_ids.append(sample.frame_id)
-            batch_proposal_score[i] = sample.proposal.score
-            batch_prop_box[i] = sample.prop_box
-            batch_calib[i] = sample.calib
-        return batch_data, batch_cls_label, batch_ious, batch_label, batch_center, \
-            batch_heading_class, batch_heading_residual, \
-            batch_size_class, batch_size_residual, \
-            batch_rot_angle, batch_img_seg_map, batch_prop_box, batch_calib, frame_ids, batch_proposal_score, is_last_batch
+            batch_data['ids'].append(sample.frame_id)
+            batch_data['pointcloud'][i,...] = point_set
+            batch_data['cls_label'][i] = sample.cls_label
+            batch_data['ious'][i] = sample.iou
+            batch_data['seg_label'][i,:] = seg_label
+            batch_data['center'][i,:] = sample.box3d_center
+            batch_data['heading_class'][i] = sample.angle_class
+            batch_data['heading_residual'][i] = sample.angle_residual
+            batch_data['size_class'][i] = sample.size_class
+            batch_data['size_residual'][i] = sample.size_residual
+            batch_data['rot_angle'][i] = sample.rot_angle
+            batch_data['img_seg_map'][i] = sample.img_seg_map
+            batch_data['prop_box'][i] = sample.prop_box
+            batch_data['proposal_score'][i] = sample.proposal.score
+            batch_data['calib'][i] = sample.calib
+        return batch_data, is_last_batch
 
     def get_center_view_rot_angle(self, frustum_angle):
         ''' Get the frustum rotation angle, it isshifted by pi/2 so that it
@@ -431,18 +429,19 @@ class FrustumDataset(object):
         fig = draw_gt_boxes3d(gt_boxes, fig, draw_text=False, color=(1, 1, 1))
         raw_input()
 
-    def load_frame_data(self, data_idx_str):
-        '''load data for the first time'''
+    def load_frame_data(self, data_idx_str, rpn_out=None, img_seg_map=None):
         start = time.time()
         data_idx = int(data_idx_str)
-        try:
-            with open(os.path.join(self.data_dir, data_idx_str+'.pkl'), 'rb') as fin:
-                rpn_out = pickle.load(fin)
-            # load image segmentation output
-            img_seg_map = np.load(os.path.join(self.data_dir, data_idx_str+'_seg.npy'))
-        except Exception as e:
-            print(e)
-            return {'samples': [], 'pos_idxs': []}
+        # rpn out and img_seg_map can be directly provided
+        if not rpn_out or not img_seg_map:
+            try:
+                with open(os.path.join(self.data_dir, data_idx_str+'.pkl'), 'rb') as fin:
+                    rpn_out = pickle.load(fin)
+                # load image segmentation output
+                img_seg_map = np.load(os.path.join(self.data_dir, data_idx_str+'_seg.npy'))
+            except Exception as e:
+                print(e)
+                return {'samples': [], 'pos_idxs': []}
         calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
         image = self.kitti_dataset.get_image(data_idx)
         pc_velo = self.kitti_dataset.get_lidar(data_idx)
