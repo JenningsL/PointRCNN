@@ -9,6 +9,7 @@ import tensorflow as tf
 import cPickle as pickle
 from threading import Thread
 from shapely.geometry import Polygon
+from datetime import datetime
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
@@ -16,6 +17,8 @@ sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 sys.path.append(os.path.join(ROOT_DIR, 'kitti'))
+from img_seg_net_deeplab import ImgSegNet
+from rpn import RPN
 from frustum_model_util import NUM_HEADING_BIN, NUM_SIZE_CLUSTER
 from frustum_model_util import NUM_SEG_CLASSES, NUM_OBJ_CLASSES, g_type2onehotclass, type_whitelist
 from frustum_dataset import FrustumDataset, Sample
@@ -29,17 +32,18 @@ import test_frustum
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
 parser.add_argument('--num_point', type=int, default=16384, help='Point Number [default: 1024]')
-parser.add_argument('--rpn_model', default='log_rpn/model.ckpt', help='rpn model checkpoint file path [default: log/model.ckpt]')
-parser.add_argument('--img_seg_model', default='./frozen_inference_graph.pb', help='image segmentation model path')
-parser.add_argument('--rcnn_model', default='log_rcnn/model.ckpt', help='rcnn model checkpoint file path [default: log/model.ckpt]')
-parser.add_argument('--output', default='test_results', help='output file/folder name [default: test_results]')
-parser.add_argument('--kitti_path', default='/data/ssd/public/jlliu/Kitti/object', help='Kitti root path')
-parser.add_argument('--split', default='test', help='Data split to use [default: test]')
+parser.add_argument('--rpn_model', type=str, default='log_rpn/model.ckpt', help='rpn model checkpoint file path [default: log/model.ckpt]')
+parser.add_argument('--img_seg_model', type=str, default='./frozen_inference_graph.pb', help='image segmentation model path')
+parser.add_argument('--rcnn_model', type=str, default='log_rcnn/model.ckpt', help='rcnn model checkpoint file path [default: log/model.ckpt]')
+parser.add_argument('--output', type=str, default='test_results', help='output file/folder name [default: test_results]')
+parser.add_argument('--kitti_path', type=str, default='/data/ssd/public/jlliu/Kitti/object', help='Kitti root path')
+parser.add_argument('--split', type=str, default='test', help='Data split to use [default: test]')
 parser.add_argument('--dump_result', action='store_true', help='If true, also dump results to .pickle file')
 FLAGS = parser.parse_args()
 
+# only batch_size=1 is supported now
 BATCH_SIZE = 1
-BATCH_SIZE_RCNN = 8
+BATCH_SIZE_RCNN = 1
 GPU_INDEX = FLAGS.gpu
 NUM_POINT = FLAGS.num_point
 NUM_POINT_RCNN = 512
@@ -57,7 +61,6 @@ def get_session_and_models():
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
     config.log_device_placement = False
-    saver = tf.train.Saver()
 
     # image segmentaion
     with tf.Graph().as_default():
@@ -69,7 +72,7 @@ def get_session_and_models():
     # point RPN
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=is_training)
+            rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, is_training=False)
             pls = rpn_model.placeholders
             box_center, box_angle, box_size = rpn_model.box_encoder.tf_decode(rpn_model.end_points)
             box_center = box_center + rpn_model.end_points['fg_points_xyz']
@@ -77,27 +80,26 @@ def get_session_and_models():
             rpn_model.end_points['box_angle'] = box_angle
             rpn_model.end_points['box_size'] = box_size
         sess2 = tf.Session(config=config)
-        saver.restore(sess1, FLAGS.rpn_model)
+        saver = tf.train.Saver()
+        saver.restore(sess2, FLAGS.rpn_model)
 
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
             rcnn_model = FrustumPointNet(BATCH_SIZE_RCNN, NUM_POINT_RCNN)
         sess3 = tf.Session(config=config)
+        saver = tf.train.Saver()
         saver.restore(sess3, FLAGS.rcnn_model)
 
     return sess1, img_seg_net, sess2, rpn_model, sess3, rcnn_model
 
 def test(result_dir=None):
-    rpn_dataset = Dataset(NUM_POINT, FLAGS.kitti_path, FLAGS.split, is_training=False)
-    produce_thread = Thread(target=rpn_dataset.load, args=(False,))
+    produce_thread = Thread(target=RPN_DATASET.load, args=(False,))
     produce_thread.start()
 
     sess1, img_seg_net, sess2, rpn_model, sess3, rcnn_model = get_session_and_models()
 
     seg_pls = img_seg_net.placeholders
     rpn_pls = rpn_model.placeholders
-    seg_softmax = img_seg_net.get_seg_softmax()
-    full_seg = img_seg_net.get_semantic_seg()
 
     cls_list = []
     center_list = []
@@ -111,9 +113,10 @@ def test(result_dir=None):
     frame_id_list = []
     proposal_score_list = []
     while(True):
-        batch_data, is_last_batch = rpn_dataset.get_next_batch(BATCH_SIZE, need_id=True)
+        batch_data, is_last_batch = RPN_DATASET.get_next_batch(BATCH_SIZE, need_id=True)
+        print(batch_data['ids'][0])
         start = datetime.now()
-        img_seg_logits, full_img_seg = sess1.run([seg_softmax, full_seg], feed_dict={
+        img_seg_logits, full_img_seg = sess1.run([img_seg_net.end_points['seg_softmax'], img_seg_net.end_points['full_seg']], feed_dict={
             seg_pls['pointclouds']: batch_data['pointcloud'],
             seg_pls['img_inputs']: batch_data['images'],
             seg_pls['calib']: batch_data['calib'],
@@ -125,11 +128,13 @@ def test(result_dir=None):
         img_seg_binary[...,1] = np.sum(img_seg_logits[...,1:], axis=-1)
         img_seg_binary *= np.array([0, 1]) # weights
 
-        centers_val, angles_val, sizes_val, scores_val \
+        seg_logits_val, centers_val, angles_val, sizes_val, nms_ind_val, scores_val \
         = sess2.run(
-            [rpn_model.end_points['box_center'],
+            [rpn_model.end_points['foreground_logits'],
+            rpn_model.end_points['box_center'],
             rpn_model.end_points['box_angle'],
             rpn_model.end_points['box_size'],
+            rpn_model.end_points['nms_indices'],
             rpn_model.end_points['proposal_scores']],
             feed_dict={
                 rpn_pls['pointclouds']: batch_data['pointcloud'],
@@ -147,28 +152,32 @@ def test(result_dir=None):
                 rpn_pls['size_residuals_labels']: batch_data['size_res'],
                 rpn_pls['gt_box_of_point']: batch_data['gt_box_of_point'],
                 rpn_pls['img_seg_softmax']: img_seg_binary,
-                rpn_pls['is_training_pl']: is_training,
+                rpn_pls['is_training_pl']: False,
             })
 
         # prepared data for rcnn
+        preds_val = np.argmax(seg_logits_val, 2)
         rpn_out = {
             'frame_id': batch_data['ids'][0],
             'segmentation': preds_val[0],
             'centers': centers_val[0],
             'angles': angles_val[0],
             'sizes': sizes_val[0],
-            'proposal_boxes': corners_val[0],
-            'nms_indices': ind_val[0],
+            #'proposal_boxes': corners_val[0],
+            'nms_indices': nms_ind_val[0],
             'scores': scores_val[0],
             'pc_choices': batch_data['pc_choice'][0]
         }
-        RCNN_DATASET.load_frame_data(batch_data['ids'][0], rpn_out, full_img_seg)
-
+        frame_data = RCNN_DATASET.load_frame_data(batch_data['ids'][0], rpn_out, full_img_seg)
+        for s in frame_data['samples']:
+            s.frame_id = batch_data['ids'][0]
+            RCNN_DATASET.sample_buffer.put(s)
+        print('Start Rcnn')
         # 2-stage
         while(True):
-            batch_data_rcnn, is_last_batch_rcnn = RCNN_DATASET.get_next_batch()
+            batch_data_rcnn, is_last_batch_rcnn = RCNN_DATASET.get_next_batch(once=True)
 
-        	batch_cls, batch_center_pred, \
+            batch_cls, batch_center_pred, \
             batch_hclass_pred, batch_hres_pred, \
             batch_sclass_pred, batch_sres_pred, batch_scores, batch_prob = \
             test_frustum.inference(sess3, rcnn_model,
@@ -182,15 +191,15 @@ def test(result_dir=None):
                 heading_res_list.append(batch_hres_pred[i])
                 size_cls_list.append(batch_sclass_pred[i])
                 size_res_list.append(batch_sres_pred[i,:])
-                rot_angle_list.append(batch_rot_angle[i])
+                rot_angle_list.append(batch_data_rcnn['rot_angle'][i])
                 score_list.append(batch_scores[i])
                 prob_list.append(batch_prob[i])
-                proposal_score_list.append(batch_proposal_score[i])
-            frame_id_list += map(lambda fid: int(fid), batch_frame_ids)
+                proposal_score_list.append(batch_data_rcnn['proposal_score'][i])
+            frame_id_list += map(lambda fid: int(fid), batch_data_rcnn['ids'])
 
             if is_last_batch_rcnn:
                 break
-
+        print('inference time: ', datetime.now() - start)
         if is_last_batch:
             break
 
@@ -198,8 +207,8 @@ def test(result_dir=None):
     detection_objects = test_frustum.to_detection_objects(frame_id_list, type_list,
         center_list, heading_cls_list, heading_res_list,
         size_cls_list, size_res_list, rot_angle_list, score_list, prob_list,
-        proposal_score_list)
-    detection_objects = test_frustum.nms_on_bev(detection_objects, 0.01)
+        proposal_score_list, RCNN_DATASET)
+    detection_objects = test_frustum.nms_on_bev(detection_objects, RCNN_DATASET, 0.01)
     # Write detection results for KITTI evaluation
     test_frustum.write_detection_results(result_dir, detection_objects)
     output_dir = os.path.join(result_dir, 'data')
@@ -207,10 +216,10 @@ def test(result_dir=None):
     # Make sure for each frame (no matter if we have measurment for that frame),
     # there is a TXT file
     to_fill_filename_list = [frame_id+'.txt' \
-            for frame_id in TEST_DATASET.frame_ids]
+            for frame_id in RCNN_DATASET.frame_ids]
     test_frustum.fill_files(output_dir, to_fill_filename_list)
 
-    rpn_dataset.stop_loading()
+    RPN_DATASET.stop_loading()
     produce_thread.join()
 
 if __name__=='__main__':

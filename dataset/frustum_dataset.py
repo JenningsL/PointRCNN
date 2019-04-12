@@ -219,12 +219,15 @@ class FrustumDataset(object):
                 random.shuffle(self.frame_ids)
             i = (i + 1) % len(self.frame_ids)
 
-    def get_next_batch(self):
+    def get_next_batch(self, stop_empty=False):
         is_last_batch = False
         samples = []
         for _ in range(self.batch_size):
             sample = self.sample_buffer.get()
             samples.append(sample)
+            if stop_empty and self.sample_buffer.empty(): # for inference
+                is_last_batch = True
+                break
             if sample.idx == self.last_sample_id:
                 is_last_batch = True
                 self.last_sample_id = None
@@ -433,7 +436,7 @@ class FrustumDataset(object):
         start = time.time()
         data_idx = int(data_idx_str)
         # rpn out and img_seg_map can be directly provided
-        if not rpn_out or not img_seg_map:
+        if rpn_out is None or img_seg_map is None:
             try:
                 with open(os.path.join(self.data_dir, data_idx_str+'.pkl'), 'rb') as fin:
                     rpn_out = pickle.load(fin)

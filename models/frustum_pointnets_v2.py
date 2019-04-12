@@ -36,7 +36,7 @@ class FrustumPointNet(object):
         num_point = self.num_point
         return {
             'pointclouds': tf.placeholder(tf.float32, shape=(batch_size, num_point, NUM_CHANNEL)),
-            'img_seg': tf.placeholder(tf.float32, shape=(batch_size, 360, 1200, 4)), # TODO: don't hardcode feature_vector size
+            'img_seg_map': tf.placeholder(tf.float32, shape=(batch_size, 360, 1200, 4)), # TODO: don't hardcode feature_vector size
             'prop_box': tf.placeholder(tf.float32, shape=(batch_size, 7)),
             'calib': tf.placeholder(tf.float32, shape=(batch_size, 3, 4)),
             'cls_label': tf.placeholder(tf.int32, shape=(batch_size,)),
@@ -69,7 +69,7 @@ class FrustumPointNet(object):
         batch_size = self.batch_size
         point_cloud = self.placeholders['pointclouds']
         cls_label = self.placeholders['cls_label']
-        img_seg_map = self.placeholders['img_seg']
+        img_seg_map = self.placeholders['img_seg_map']
         proposal_boxes = self.placeholders['prop_box']
         calib = self.placeholders['calib']
         is_training = self.placeholders['is_training']

@@ -49,6 +49,8 @@ class ImgSegNet(object):
         tf.import_graph_def(graph_def, name="deeplab_v3")
         self.graph = tf.get_default_graph()
         self.placeholders = self.get_placeholders()
+        self.end_points['seg_softmax'] = self.get_seg_softmax()
+        self.end_points['full_seg'] = self.get_semantic_seg()
 
     def get_semantic_seg(self):
         return self.graph.get_tensor_by_name('deeplab_v3/SemanticPredictions:0')
