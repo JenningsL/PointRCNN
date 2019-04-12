@@ -175,7 +175,7 @@ def test(result_dir=None):
         print('Start Rcnn')
         # 2-stage
         while(True):
-            batch_data_rcnn, is_last_batch_rcnn = RCNN_DATASET.get_next_batch(once=True)
+            batch_data_rcnn, is_last_batch_rcnn = RCNN_DATASET.get_next_batch(stop_empty=True)
 
             batch_cls, batch_center_pred, \
             batch_hclass_pred, batch_hres_pred, \
