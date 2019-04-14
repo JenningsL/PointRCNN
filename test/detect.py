@@ -9,7 +9,7 @@ import tensorflow as tf
 import cPickle as pickle
 from threading import Thread
 from shapely.geometry import Polygon
-from datetime import datetime
+import time
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
@@ -43,7 +43,7 @@ FLAGS = parser.parse_args()
 
 # only batch_size=1 is supported now
 BATCH_SIZE = 1
-BATCH_SIZE_RCNN = 1
+BATCH_SIZE_RCNN = 32
 GPU_INDEX = FLAGS.gpu
 NUM_POINT = FLAGS.num_point
 NUM_POINT_RCNN = 512
@@ -52,6 +52,10 @@ RPN_DATASET = Dataset(NUM_POINT, FLAGS.kitti_path, FLAGS.split, is_training=Fals
 RCNN_DATASET = FrustumDataset(NUM_POINT_RCNN, FLAGS.kitti_path, BATCH_SIZE_RCNN, FLAGS.split,
              data_dir='./rcnn_data_'+FLAGS.split,
              augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, use_gt_prop=False)
+
+def print_flush(s):
+    print(s)
+    sys.stdout.flush()
 
 def get_session_and_models():
     ''' Define model graph, load model parameters,
@@ -113,9 +117,11 @@ def test(result_dir=None):
     frame_id_list = []
     proposal_score_list = []
     while(True):
+        start = time.time()
         batch_data, is_last_batch = RPN_DATASET.get_next_batch(BATCH_SIZE, need_id=True)
-        print(batch_data['ids'][0])
-        start = datetime.now()
+        print_flush('rpn prepare data time: ' + str(time.time() - start))
+        start = time.time()
+
         img_seg_logits, full_img_seg = sess1.run([img_seg_net.end_points['seg_softmax'], img_seg_net.end_points['full_seg']], feed_dict={
             seg_pls['pointclouds']: batch_data['pointcloud'],
             seg_pls['img_inputs']: batch_data['images'],
@@ -127,6 +133,8 @@ def test(result_dir=None):
         img_seg_binary[...,0] = img_seg_logits[...,0]
         img_seg_binary[...,1] = np.sum(img_seg_logits[...,1:], axis=-1)
         img_seg_binary *= np.array([0, 1]) # weights
+        print_flush('img seg time: ' + str(time.time() - start))
+        start = time.time()
 
         seg_logits_val, centers_val, angles_val, sizes_val, nms_ind_val, scores_val \
         = sess2.run(
@@ -154,6 +162,8 @@ def test(result_dir=None):
                 rpn_pls['img_seg_softmax']: img_seg_binary,
                 rpn_pls['is_training_pl']: False,
             })
+        print_flush('region propose time: ' + str(time.time() - start))
+        start = time.time()
 
         # prepared data for rcnn
         preds_val = np.argmax(seg_logits_val, 2)
@@ -172,10 +182,15 @@ def test(result_dir=None):
         for s in frame_data['samples']:
             s.frame_id = batch_data['ids'][0]
             RCNN_DATASET.sample_buffer.put(s)
-        print('Start Rcnn')
+        # caculate how many sample is valid in the last batch
+        last_rcnn_batch = len(frame_data['samples']) % BATCH_SIZE_RCNN
+
+        print_flush('rcnn data prepare time: ' + str(time.time() - start))
+        start = time.time()
         # 2-stage
-        while(True):
-            batch_data_rcnn, is_last_batch_rcnn = RCNN_DATASET.get_next_batch(stop_empty=True)
+        while(RCNN_DATASET.sample_buffer.empty() == False):
+            batch_data_rcnn, _ = RCNN_DATASET.get_next_batch(wait=False)
+            start1 = time.time()
 
             batch_cls, batch_center_pred, \
             batch_hclass_pred, batch_hres_pred, \
@@ -183,8 +198,13 @@ def test(result_dir=None):
             test_frustum.inference(sess3, rcnn_model,
                 batch_data_rcnn['pointcloud'], batch_data_rcnn['img_seg_map'],
                 batch_data_rcnn['prop_box'], batch_data_rcnn['calib'], batch_data_rcnn['cls_label'])
+            print_flush('rcnn infer batch time: ' + str(time.time() - start1))
             # gather output of all frames
-            for i in range(BATCH_SIZE_RCNN):
+            sample_num = BATCH_SIZE_RCNN
+            if RCNN_DATASET.sample_buffer.empty():
+                # may contain zero padding in the last batch
+                sample_num = last_rcnn_batch
+            for i in range(sample_num):
                 cls_list.append(batch_cls[i,...])
                 center_list.append(batch_center_pred[i,:])
                 heading_cls_list.append(batch_hclass_pred[i])
@@ -195,11 +215,9 @@ def test(result_dir=None):
                 score_list.append(batch_scores[i])
                 prob_list.append(batch_prob[i])
                 proposal_score_list.append(batch_data_rcnn['proposal_score'][i])
-            frame_id_list += map(lambda fid: int(fid), batch_data_rcnn['ids'])
+                frame_id_list.append(int(batch_data_rcnn['ids'][i]))
 
-            if is_last_batch_rcnn:
-                break
-        print('inference time: ', datetime.now() - start)
+        print_flush('rcnn total inference time: ' + str(time.time() - start))
         if is_last_batch:
             break
 

@@ -58,12 +58,8 @@ DECAY_STEP = FLAGS.decay_step
 DECAY_RATE = FLAGS.decay_rate
 # NUM_CHANNEL = 3 if FLAGS.no_intensity else 4 # point feature channel
 
-MODEL = importlib.import_module(FLAGS.model) # import network module
-MODEL_FILE = os.path.join(ROOT_DIR, 'models', FLAGS.model+'.py')
 LOG_DIR = FLAGS.log_dir
 if not os.path.exists(LOG_DIR): os.mkdir(LOG_DIR)
-os.system('cp %s %s' % (MODEL_FILE, LOG_DIR)) # bkp of model def
-os.system('cp %s %s' % (os.path.join(BASE_DIR, 'train.py'), LOG_DIR))
 LOG_FOUT = open(os.path.join(LOG_DIR, 'log_train.txt'), 'w')
 LOG_FOUT.write(str(FLAGS)+'\n')
 
@@ -115,13 +111,6 @@ def train():
     best_avg_cls_acc = 0
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            # pointclouds_pl, img_seg_map_pl, prop_box_pl, calib_pl, cls_labels_pl, ious_pl, labels_pl, centers_pl, \
-            # heading_class_label_pl, heading_residual_label_pl, \
-            # size_class_label_pl, size_residual_label_pl = \
-            #     MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
-
-            # is_training_pl = tf.placeholder(tf.bool, shape=())
-
             # Note the global_step=batch parameter to minimize.
             # That tells the optimizer to increment the 'batch' parameter
             # for you every time it trains.
@@ -135,11 +124,6 @@ def train():
             end_points = frustum_pointnet.end_points
             pls = frustum_pointnet.placeholders
             loss, loss_endpoints = frustum_pointnet.get_loss()
-            # end_points = MODEL.get_model(pointclouds_pl, cls_labels_pl, img_seg_map_pl,
-            #     prop_box_pl, calib_pl, is_training_pl, bn_decay=bn_decay)
-            # loss, loss_endpoints = MODEL.get_loss(cls_labels_pl, ious_pl, labels_pl, centers_pl,
-            #     heading_class_label_pl, heading_residual_label_pl,
-            #     size_class_label_pl, size_residual_label_pl, end_points)
             tf.summary.scalar('loss', loss)
 
             losses = tf.get_collection('losses')
@@ -151,9 +135,9 @@ def train():
                 end_points['center'], \
                 end_points['heading_scores'], end_points['heading_residuals'], \
                 end_points['size_scores'], end_points['size_residuals'], \
-                centers_pl, \
-                heading_class_label_pl, heading_residual_label_pl, \
-                size_class_label_pl, size_residual_label_pl], \
+                pls['centers'], \
+                pls['heading_class_label'], pls['heading_residual_label'], \
+                pls['size_class_label'], pls['size_residual_label']], \
                 [tf.float32, tf.float32])
             end_points['iou2ds'] = iou2ds
             end_points['iou3ds'] = iou3ds
@@ -161,7 +145,7 @@ def train():
             tf.summary.scalar('iou_3d', tf.reduce_mean(iou3ds))
 
             correct = tf.equal(tf.argmax(end_points['mask_logits'], 2),
-                tf.to_int64(labels_pl))
+                tf.to_int64(pls['seg_labels']))
             accuracy = tf.reduce_sum(tf.cast(correct, tf.float32)) / \
                 float(BATCH_SIZE*NUM_POINT)
             tf.summary.scalar('segmentation accuracy', accuracy)
@@ -215,7 +199,7 @@ def train():
             saver.restore(sess, FLAGS.restore_model_path)
 
         ops = {'pointclouds_pl': pls['pointclouds'],
-               'img_seg_map_pl': pls['img_seg'],
+               'img_seg_map_pl': pls['img_seg_map'],
                'prop_box_pl': pls['prop_box'],
                'calib_pl': pls['calib'],
                'cls_label_pl': pls['cls_label'],
@@ -242,7 +226,7 @@ def train():
             sys.stdout.flush()
 
             train_one_epoch(sess, ops, train_writer)
-            if epoch >= 10:
+            if epoch >= 10 or True:
                 val_loss, avg_cls_acc, estimate_acc = eval_one_epoch(sess, ops, test_writer)
             # Save the variables to disk.
             # if val_loss < best_val_loss:
@@ -279,28 +263,23 @@ def train_one_epoch(sess, ops, train_writer, idxs_to_use=None):
     # for batch_idx in range(num_batches):
     batch_idx = 0
     while(True):
-        batch_data, batch_cls_label, batch_ious, batch_label, batch_center, \
-        batch_hclass, batch_hres, \
-        batch_sclass, batch_sres, \
-        batch_rot_angle, batch_img_seg_map, batch_prop_box, batch_calib, batch_frame_ids, \
-        batch_proposal_score, is_last_batch = TRAIN_DATASET.get_next_batch()
-
-        if is_last_batch and len(batch_data) != BATCH_SIZE:
-            # discard last batch with fewer data
+        batch_data, is_last_batch = TRAIN_DATASET.get_next_batch()
+        # FIXME: will discard last batch if it has less samples than batch size
+        if len(batch_data['ids']) != BATCH_SIZE:
             break
 
-        feed_dict = {ops['pointclouds_pl']: batch_data,
-                     ops['img_seg_map_pl']: batch_img_seg_map,
-                     ops['prop_box_pl']: batch_prop_box,
-                     ops['calib_pl']: batch_calib,
-                     ops['cls_label_pl']: batch_cls_label,
-                     ops['ious_pl']: batch_ious,
-                     ops['labels_pl']: batch_label,
-                     ops['centers_pl']: batch_center,
-                     ops['heading_class_label_pl']: batch_hclass,
-                     ops['heading_residual_label_pl']: batch_hres,
-                     ops['size_class_label_pl']: batch_sclass,
-                     ops['size_residual_label_pl']: batch_sres,
+        feed_dict = {ops['pointclouds_pl']: batch_data['pointcloud'],
+                     ops['img_seg_map_pl']: batch_data['img_seg_map'],
+                     ops['prop_box_pl']: batch_data['prop_box'],
+                     ops['calib_pl']: batch_data['calib'],
+                     ops['cls_label_pl']: batch_data['cls_label'],
+                     ops['ious_pl']: batch_data['ious'],
+                     ops['labels_pl']: batch_data['seg_label'],
+                     ops['centers_pl']: batch_data['center'],
+                     ops['heading_class_label_pl']: batch_data['heading_class'],
+                     ops['heading_residual_label_pl']: batch_data['heading_residual'],
+                     ops['size_class_label_pl']: batch_data['size_class'],
+                     ops['size_residual_label_pl']: batch_data['size_residual'],
                      ops['is_training_pl']: is_training,}
 
         summary, step, _, loss_val, cls_logits_val, logits_val, centers_pred_val, \
@@ -314,22 +293,22 @@ def train_one_epoch(sess, ops, train_writer, idxs_to_use=None):
 
         # classification acc
         cls_preds_val = np.argmax(cls_logits_val, 1)
-        cls_correct = np.sum(cls_preds_val == batch_cls_label)
-        tp = np.sum(np.logical_and(cls_preds_val == batch_cls_label, batch_cls_label != g_type2onehotclass['NonObject']))
-        fp = np.sum(np.logical_and(cls_preds_val != batch_cls_label, batch_cls_label == g_type2onehotclass['NonObject']))
-        fn = np.sum(np.logical_and(cls_preds_val != batch_cls_label, batch_cls_label != g_type2onehotclass['NonObject']))
+        cls_correct = np.sum(cls_preds_val == batch_data['cls_label'])
+        tp = np.sum(np.logical_and(cls_preds_val == batch_data['cls_label'], batch_data['cls_label'] != g_type2onehotclass['NonObject']))
+        fp = np.sum(np.logical_and(cls_preds_val != batch_data['cls_label'], batch_data['cls_label'] == g_type2onehotclass['NonObject']))
+        fn = np.sum(np.logical_and(cls_preds_val != batch_data['cls_label'], batch_data['cls_label'] != g_type2onehotclass['NonObject']))
         total_tp += tp
         total_fp += fp
         total_fn += fn
         total_cls_correct += cls_correct
         total_cls_seen += BATCH_SIZE
         # only calculate seg acc and regression performance with object labels
-        obj_mask = batch_cls_label != g_type2onehotclass['NonObject']
+        obj_mask = batch_data['cls_label'] != g_type2onehotclass['NonObject']
         obj_sample_num = np.sum(obj_mask)
         total_obj_sample += obj_sample_num
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
-        correct = np.sum(preds_val[obj_mask] == batch_label[obj_mask])
+        correct = np.sum(preds_val[obj_mask] == batch_data['seg_label'][obj_mask])
         total_correct += correct
         total_seen += (obj_sample_num*NUM_POINT)
         loss_sum += loss_val
@@ -404,28 +383,24 @@ def eval_one_epoch(sess, ops, test_writer):
     # for batch_idx in range(num_batches):
     num_batches = 0
     while(True):
-        batch_data, batch_cls_label, batch_ious, batch_label, batch_center, \
-        batch_hclass, batch_hres, \
-        batch_sclass, batch_sres, \
-        batch_rot_angle, batch_img_seg_map, batch_prop_box, batch_calib, batch_frame_ids, \
-        batch_proposal_score, is_last_batch = TEST_DATASET.get_next_batch()
+        batch_data, is_last_batch = TEST_DATASET.get_next_batch()
 
-        if is_last_batch and len(batch_data) != BATCH_SIZE:
-            # discard last batch with fewer data
+        # FIXME: will discard last batch if it has less samples than batch size
+        if len(batch_data['ids']) != BATCH_SIZE:
             break
 
-        feed_dict = {ops['pointclouds_pl']: batch_data,
-                     ops['img_seg_map_pl']: batch_img_seg_map,
-                     ops['prop_box_pl']: batch_prop_box,
-                     ops['calib_pl']: batch_calib,
-                     ops['cls_label_pl']: batch_cls_label,
-                     ops['ious_pl']: batch_ious,
-                     ops['labels_pl']: batch_label,
-                     ops['centers_pl']: batch_center,
-                     ops['heading_class_label_pl']: batch_hclass,
-                     ops['heading_residual_label_pl']: batch_hres,
-                     ops['size_class_label_pl']: batch_sclass,
-                     ops['size_residual_label_pl']: batch_sres,
+        feed_dict = {ops['pointclouds_pl']: batch_data['pointcloud'],
+                     ops['img_seg_map_pl']: batch_data['img_seg_map'],
+                     ops['prop_box_pl']: batch_data['prop_box'],
+                     ops['calib_pl']: batch_data['calib'],
+                     ops['cls_label_pl']: batch_data['cls_label'],
+                     ops['ious_pl']: batch_data['ious'],
+                     ops['labels_pl']: batch_data['seg_label'],
+                     ops['centers_pl']: batch_data['center'],
+                     ops['heading_class_label_pl']: batch_data['heading_class'],
+                     ops['heading_residual_label_pl']: batch_data['heading_residual'],
+                     ops['size_class_label_pl']: batch_data['size_class'],
+                     ops['size_residual_label_pl']: batch_data['size_residual'],
                      ops['is_training_pl']: is_training or FLAGS.train_reg_only}
 
         summary, step, loss_val, loss_endpoints, cls_logits_val, logits_val, iou2ds, iou3ds = \
@@ -440,26 +415,26 @@ def eval_one_epoch(sess, ops, test_writer):
 
         # classification acc
         cls_preds_val = np.argmax(cls_logits_val, 1)
-        cls_correct = np.sum(cls_preds_val == batch_cls_label)
-        tp = np.sum(np.logical_and(cls_preds_val == batch_cls_label, batch_cls_label != g_type2onehotclass['NonObject']))
-        fp = np.sum(np.logical_and(cls_preds_val != batch_cls_label, batch_cls_label == g_type2onehotclass['NonObject']))
-        fn = np.sum(np.logical_and(cls_preds_val != batch_cls_label, batch_cls_label != g_type2onehotclass['NonObject']))
+        cls_correct = np.sum(cls_preds_val == batch_data['cls_label'])
+        tp = np.sum(np.logical_and(cls_preds_val == batch_data['cls_label'], batch_data['cls_label'] != g_type2onehotclass['NonObject']))
+        fp = np.sum(np.logical_and(cls_preds_val != batch_data['cls_label'], batch_data['cls_label'] == g_type2onehotclass['NonObject']))
+        fn = np.sum(np.logical_and(cls_preds_val != batch_data['cls_label'], batch_data['cls_label'] != g_type2onehotclass['NonObject']))
         total_tp += tp
         total_fp += fp
         total_fn += fn
         total_cls_correct += cls_correct
         total_cls_seen += BATCH_SIZE
         for l in range(NUM_OBJ_CLASSES):
-            total_seen_class[l] += np.sum(batch_cls_label==l)
-            total_correct_class[l] += (np.sum((cls_preds_val==l) & (batch_cls_label==l)))
+            total_seen_class[l] += np.sum(batch_data['cls_label']==l)
+            total_correct_class[l] += (np.sum((cls_preds_val==l) & (batch_data['cls_label']==l)))
 
         # only calculate seg acc and regression performance with object labels
-        obj_mask = batch_cls_label != g_type2onehotclass['NonObject']
+        obj_mask = batch_data['cls_label'] != g_type2onehotclass['NonObject']
         obj_sample_num = np.sum(obj_mask)
         total_obj_sample += obj_sample_num
         # segmentation acc
         preds_val = np.argmax(logits_val, 2)
-        correct = np.sum(preds_val[obj_mask] == batch_label[obj_mask])
+        correct = np.sum(preds_val[obj_mask] == batch_data['seg_label'][obj_mask])
         total_correct += correct
         total_seen += (obj_sample_num*NUM_POINT)
         loss_sum += loss_val

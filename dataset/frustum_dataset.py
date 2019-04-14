@@ -219,39 +219,41 @@ class FrustumDataset(object):
                 random.shuffle(self.frame_ids)
             i = (i + 1) % len(self.frame_ids)
 
-    def get_next_batch(self, stop_empty=False):
+    def get_next_batch(self, wait=True):
         is_last_batch = False
         samples = []
         for _ in range(self.batch_size):
-            sample = self.sample_buffer.get()
-            samples.append(sample)
-            if stop_empty and self.sample_buffer.empty(): # for inference
+            if not wait and self.sample_buffer.empty(): # stop if empty, for inference
                 is_last_batch = True
                 break
+            sample = self.sample_buffer.get() # block if empty, for training
+            samples.append(sample)
             if sample.idx == self.last_sample_id:
                 is_last_batch = True
                 self.last_sample_id = None
                 break
 
-        bsize = len(samples) # note that bsize can be smaller than self.batch_size
+        batch_size = self.batch_size
+        avail_num = len(samples) # note that avail_num can be smaller than self.batch_size
+        # may pad the remaining with zero
         batch_data = {
             'ids': [],
-            'pointcloud': np.zeros((bsize, self.npoints, self.num_channel)),
-            'cls_label': np.zeros((bsize,), dtype=np.int32),
-            'ious': np.zeros((bsize,), dtype=np.float32),
-            'seg_label': np.zeros((bsize, self.npoints), dtype=np.int32),
-            'center': np.zeros((bsize, 3)),
-            'heading_class': np.zeros((bsize,), dtype=np.int32),
-            'heading_residual': np.zeros((bsize,)),
-            'size_class': np.zeros((bsize,), dtype=np.int32),
-            'size_residual': np.zeros((bsize, 3)),
-            'rot_angle': np.zeros((bsize,)),
-            'img_seg_map': np.zeros((bsize, 360, 1200, 4), dtype=np.float32),
-            'prop_box': np.zeros((bsize, 7), dtype=np.float32),
-            'proposal_score': np.zeros((bsize,), dtype=np.float32),
-            'calib': np.zeros((bsize, 3, 4), dtype=np.float32)
+            'pointcloud': np.zeros((batch_size, self.npoints, self.num_channel)),
+            'cls_label': np.zeros((batch_size,), dtype=np.int32),
+            'ious': np.zeros((batch_size,), dtype=np.float32),
+            'seg_label': np.zeros((batch_size, self.npoints), dtype=np.int32),
+            'center': np.zeros((batch_size, 3)),
+            'heading_class': np.zeros((batch_size,), dtype=np.int32),
+            'heading_residual': np.zeros((batch_size,)),
+            'size_class': np.zeros((batch_size,), dtype=np.int32),
+            'size_residual': np.zeros((batch_size, 3)),
+            'rot_angle': np.zeros((batch_size,)),
+            'img_seg_map': np.zeros((batch_size, 360, 1200, 4), dtype=np.float32),
+            'prop_box': np.zeros((batch_size, 7), dtype=np.float32),
+            'proposal_score': np.zeros((batch_size,), dtype=np.float32),
+            'calib': np.zeros((batch_size, 3, 4), dtype=np.float32)
         }
-        for i in range(bsize):
+        for i in range(avail_num):
             sample = samples[i]
             assert(sample.point_set.shape[0] == sample.seg_label.shape[0])
             if sample.point_set.shape[0] == 0:
@@ -433,7 +435,6 @@ class FrustumDataset(object):
         raw_input()
 
     def load_frame_data(self, data_idx_str, rpn_out=None, img_seg_map=None):
-        start = time.time()
         data_idx = int(data_idx_str)
         # rpn out and img_seg_map can be directly provided
         if rpn_out is None or img_seg_map is None:
@@ -445,6 +446,7 @@ class FrustumDataset(object):
             except Exception as e:
                 print(e)
                 return {'samples': [], 'pos_idxs': []}
+        start = time.time()
         calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
         image = self.kitti_dataset.get_image(data_idx)
         pc_velo = self.kitti_dataset.get_lidar(data_idx)
@@ -534,6 +536,7 @@ class FrustumDataset(object):
             ret['recall'] = np.sum(recall)/len(objects)
         if len(pos_idxs) > 0:
             ret['avg_iou'] = avg_iou
+        #print('load frame data cost: ', time.time() - start)
         return ret
 
     def find_match_label(self, prop_corners, labels_corners):
@@ -572,8 +575,9 @@ if __name__ == '__main__':
     dataset = FrustumDataset(512, kitti_path, 16, split, data_dir='./rcnn_data_'+split,
                  augmentX=augmentX, random_shift=True, rotate_to_center=True, random_flip=True,
                  use_gt_prop=use_gt_prop)
-    #dataset.preprocess()
-    # dataset.load_buffer_repeatedly(0.5)
+    #dataset.load_buffer_repeatedly(0.5)
+    dataset.load_frame_data('000001')
+    dataset.get_next_batch(wait=False)
 
     '''
     produce_thread = threading.Thread(target=dataset.load_buffer_repeatedly, args=(1.0,))
