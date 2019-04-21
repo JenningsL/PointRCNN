@@ -168,7 +168,8 @@ class Dataset(object):
             batch['gt_boxes'].append(frame['gt_boxes'])
             batch['pc_choice'].append(frame['pc_choice'])
         # use random 1/4 subset of aug_scene
-        if self.batch_idx == total_batch - 1 or (self.use_aug_scene and self.batch_idx == total_batch / 4):
+        #if self.batch_idx == total_batch - 1 or (self.use_aug_scene and self.batch_idx == total_batch / 4):
+        if self.batch_idx == total_batch - 1:
             is_last_batch = True
             self.batch_idx = 0
             random.shuffle(self.frame_ids)

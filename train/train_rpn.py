@@ -91,8 +91,7 @@ def get_bn_decay(batch):
 
 TRAIN_DATASET = Dataset(NUM_POINT, NUM_CHANNEL, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True, use_aug_scene=True)
 # data loading threads
-# FIXME: don't use data augmentation with image feature before calib matrix is adjust accordingly
-train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
+train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(False,))
 train_produce_thread.start()
 
 def train():
@@ -178,7 +177,7 @@ def train():
             sys.stdout.flush()
             # eval iou and recall is slow
             #eval_iou_recall = epoch > 10
-            #eval_iou_recall = True
+            #eval_iou_recall = False
             eval_iou_recall = epoch % 2 == 0
             train_one_epoch(sess, ops, placeholders, train_writer, eval_iou_recall)
             # Save the variables to disk.

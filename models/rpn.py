@@ -11,7 +11,7 @@ sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 import tf_util
 from pointnet_util import pointnet_sa_module, pointnet_sa_module_msg, pointnet_fp_module
-from model_util import point_cloud_masking, get_box3d_corners_helper, focal_loss, huber_loss
+from model_util import point_cloud_masking, get_box3d_corners_helper, focal_loss, huber_loss, SigmoidFocalClassificationLoss
 from model_util import NUM_FG_POINT
 from box_encoder import NUM_SIZE_CLUSTER, type_mean_size
 from box_encoder import BoxEncoder
@@ -311,8 +311,14 @@ class RPN(object):
         pls = self.placeholders
         end_points = self.end_points
         batch_size = self.batch_size
+        num_point = self.num_point
         # 3D Segmentation loss
-        mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(pls['seg_labels'], NUM_SEG_CLASSES, axis=-1))
+        #mask_loss = focal_loss(end_points['foreground_logits'], tf.one_hot(pls['seg_labels'], NUM_SEG_CLASSES, axis=-1))
+        focal_loss = SigmoidFocalClassificationLoss()
+        mask_weights = tf.tile(tf.constant([[[1, 15]]], dtype=tf.float32), [batch_size, num_point, 1])
+        pos_normalizer = tf.maximum(tf.reduce_sum(tf.cast(pls['seg_labels']>0, tf.float32)), 1)
+        mask_weights = mask_weights / pos_normalizer
+        mask_loss = focal_loss._compute_loss(end_points['foreground_logits'], tf.one_hot(pls['seg_labels'], NUM_SEG_CLASSES, axis=-1), mask_weights)
         tf.summary.scalar('mask loss', mask_loss)
         #return mask_loss, {}
         # gather box estimation labels of foreground points
