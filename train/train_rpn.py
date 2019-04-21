@@ -48,6 +48,11 @@ OPTIMIZER = FLAGS.optimizer
 DECAY_STEP = FLAGS.decay_step
 DECAY_RATE = FLAGS.decay_rate
 
+if FLAGS.no_intensity:
+    NUM_CHANNEL = 3
+else:
+    NUM_CHANNEL = 4
+
 LOG_DIR = FLAGS.log_dir
 if not os.path.exists(LOG_DIR): os.mkdir(LOG_DIR)
 LOG_FOUT = open(os.path.join(LOG_DIR, 'log_train.txt'), 'w')
@@ -84,7 +89,7 @@ def get_bn_decay(batch):
     return bn_decay
 
 
-TRAIN_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True)
+TRAIN_DATASET = Dataset(NUM_POINT, NUM_CHANNEL, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True, use_aug_scene=True)
 # data loading threads
 # FIXME: don't use data augmentation with image feature before calib matrix is adjust accordingly
 train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
@@ -106,7 +111,7 @@ def train():
             tf.summary.scalar('bn_decay', bn_decay)
 
             # Get model and losses
-            rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=4, bn_decay=bn_decay, is_training=True)
+            rpn_model = RPN(BATCH_SIZE, NUM_POINT, num_channel=NUM_CHANNEL, bn_decay=bn_decay, is_training=True)
             placeholders = rpn_model.placeholders
             end_points = rpn_model.end_points
             loss, loss_endpoints = rpn_model.get_loss()
@@ -135,7 +140,7 @@ def train():
                 train_op = slim.learning.create_train_op(
                     loss,
                     optimizer,
-                    #clip_gradient_norm=1.0,
+                    clip_gradient_norm=1.0,
                     global_step=batch)
 
             # Add ops to save and restore all the variables.
@@ -143,8 +148,7 @@ def train():
 
         # Create a session
         config = tf.ConfigProto()
-        #config.gpu_options.allow_growth = True
-        config.gpu_options.allow_growth = False
+        config.gpu_options.allow_growth = True
         config.allow_soft_placement = True
         config.log_device_placement = False
         sess = tf.Session(config=config)
@@ -173,7 +177,9 @@ def train():
             log_string('**** EPOCH %03d ****' % (epoch))
             sys.stdout.flush()
             # eval iou and recall is slow
-            eval_iou_recall = (epoch > 10 and epoch % 2 == 0)
+            #eval_iou_recall = epoch > 10
+            #eval_iou_recall = True
+            eval_iou_recall = epoch % 2 == 0
             train_one_epoch(sess, ops, placeholders, train_writer, eval_iou_recall)
             # Save the variables to disk.
             # if val_loss < best_val_loss:
@@ -296,7 +302,7 @@ def train_one_epoch(sess, ops, pls, train_writer, more=False):
 
 
 def eval_one_epoch(sess, ops, pls, test_writer, more=False):
-    TEST_DATASET = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=True)
+    TEST_DATASET = Dataset(NUM_POINT, NUM_CHANNEL, '/data/ssd/public/jlliu/Kitti/object', 'val', is_training=True)
     test_produce_thread = Thread(target=TEST_DATASET.load, args=(False,))
     test_produce_thread.start()
 

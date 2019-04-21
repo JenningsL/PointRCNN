@@ -31,17 +31,21 @@ HEADING_SEARCH_RANGE = np.pi
 box_encoder = BoxEncoder(CENTER_SEARCH_RANGE, NUM_CENTER_BIN, HEADING_SEARCH_RANGE, NUM_HEADING_BIN)
 
 class Dataset(object):
-    def __init__(self, npoints, kitti_path, split, is_training, \
-        types=type_whitelist, difficulties=difficulties_whitelist, train_img_seg=False):
+    def __init__(self, npoints, num_channel, kitti_path, split, is_training, \
+        use_aug_scene=False, types=type_whitelist, difficulties=difficulties_whitelist):
         self.npoints = npoints
         self.kitti_path = kitti_path
         #self.batch_size = batch_size
         self.split = split
         self.is_training = is_training
-        self.train_img_seg = train_img_seg
+        self.use_aug_scene = use_aug_scene
         if split in ['train', 'val']:
             self.kitti_dataset = kitti_object(kitti_path, 'training')
-            self.frame_ids = self.load_split_ids(split)
+            if self.use_aug_scene:
+                id_txt = os.path.join(self.kitti_path, 'aug_scene/train_aug.txt')
+            else:
+                id_txt = os.path.join(self.kitti_path, split + '.txt')
+            self.frame_ids = self.load_split_ids(id_txt)
             random.shuffle(self.frame_ids)
         else:
             self.kitti_dataset = kitti_object_video(
@@ -50,7 +54,7 @@ class Dataset(object):
                 kitti_path)
             self.frame_ids = range(self.kitti_dataset.num_samples)
         self.dense_points = DensePoints(kitti_path)
-        self.num_channel = 4
+        self.num_channel = num_channel
         self.AUG_X = 1
 
         self.types_list = types
@@ -61,8 +65,8 @@ class Dataset(object):
         self.stop = False
         self.data_buffer = Queue(maxsize=256)
 
-    def load_split_ids(self, split):
-        with open(os.path.join(self.kitti_path, split + '.txt')) as f:
+    def load_split_ids(self, id_txt):
+        with open(id_txt) as f:
             return [line.rstrip('\n') for line in f]
 
     def load(self, aug=False):
@@ -146,7 +150,7 @@ class Dataset(object):
             batch['ids'].append(frame['frame_id'])
             objectness, center_cls, center_res, angle_cls, angle_res, size_cls, size_res = \
                 frame['proposal_of_point']
-            batch['pointcloud'][i,...] = frame['pointcloud']
+            batch['pointcloud'][i,...] = frame['pointcloud'][:, :self.num_channel]
             batch['images'][i,...] = frame['image']
             batch['calib'][i,...] = frame['calib']
             batch['seg_label'][i,:] = frame['mask_label']
@@ -163,7 +167,8 @@ class Dataset(object):
             batch['gt_box_of_point'][i,...] = frame['gt_box_of_point']
             batch['gt_boxes'].append(frame['gt_boxes'])
             batch['pc_choice'].append(frame['pc_choice'])
-        if self.batch_idx == total_batch - 1:
+        # use random 1/4 subset of aug_scene
+        if self.batch_idx == total_batch - 1 or (self.use_aug_scene and self.batch_idx == total_batch / 4):
             is_last_batch = True
             self.batch_idx = 0
             random.shuffle(self.frame_ids)
@@ -173,7 +178,7 @@ class Dataset(object):
 
     def viz_frame(self, pc_rect, mask, gt_boxes):
         import mayavi.mlab as mlab
-        from viz_util import draw_lidar, draw_lidar_simple, draw_gt_boxes3d
+        from mayavi_utils import draw_lidar, draw_lidar_simple, draw_gt_boxes3d
         fig = draw_lidar(pc_rect)
         fig = draw_lidar(pc_rect[mask==1], fig=fig, pts_color=(1, 1, 1))
         fig = draw_gt_boxes3d(gt_boxes, fig, draw_text=False, color=(1, 1, 1))
@@ -182,39 +187,21 @@ class Dataset(object):
     def load_frame_data(self, data_idx_str,
         random_flip=False, random_rotate=False, random_shift=False, pca_jitter=False):
         '''load one frame'''
-        data_idx = int(data_idx_str)
+        if self.use_aug_scene:
+            data_idx = int(data_idx_str[2:])
+        else:
+            data_idx = int(data_idx_str)
         # print(data_idx_str)
         calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
-        if self.is_training:
-            objects = self.kitti_dataset.get_label_objects(data_idx)
-        else:
-            objects = []
-        objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
-        gt_boxes = [] # ground truth boxes
         image = self.kitti_dataset.get_image(data_idx)
-        pc_velo = self.kitti_dataset.get_lidar(data_idx)
         img_height, img_width = image.shape[0:2]
         # data augmentation
         if pca_jitter:
             image = apply_pca_jitter(image)[0]
 
-        # if random_flip and np.random.random()>0.5: # 50% chance flipping
-        if random_flip and False:
-            pc_velo[:,1] *= -1
-            # FIXME: to flip the scene, optical center also need to be adjusted
-            # dont use with image now
-            calib.P[0,2] = img_width-calib.P[0,2]
-            image = np.flip(image, axis=1)
-            for obj in objects:
-                obj.t = [-obj.t[0], obj.t[1], obj.t[2]]
-                # ensure that ry is [-pi, pi]
-                if obj.ry >= 0:
-                    obj.ry = np.pi - obj.ry
-                else:
-                    obj.ry = -np.pi - obj.ry
-
-        # use original point cloud for rpn
-        if not self.train_img_seg:
+        objects = []
+        if not self.use_aug_scene or data_idx_str[:2] == '00':
+            pc_velo = self.kitti_dataset.get_lidar(data_idx)
             _, pc_image_coord, img_fov_inds = get_lidar_in_image_fov(pc_velo[:,0:3],
                 calib, 0, 0, img_width, img_height, True)
             pc_velo = pc_velo[img_fov_inds, :]
@@ -223,50 +210,30 @@ class Dataset(object):
             pc_rect = np.zeros_like(point_set)
             pc_rect[:,0:3] = calib.project_velo_to_rect(point_set[:,0:3])
             pc_rect[:,3] = point_set[:,3]
+            if self.is_training:
+                objects = self.kitti_dataset.get_label_objects(data_idx)
         else:
-            # use dense point cloud for training image segmentation
-            pc_dense = self.dense_points.load_dense_points(data_idx)
-            # get_lidar_in_image_fov
-            pts_2d = calib.project_rect_to_image(pc_dense)
-            fov_inds = (pts_2d[:,0]<img_width) & (pts_2d[:,0]>=0) & \
-                (pts_2d[:,1]<img_height) & (pts_2d[:,1]>=0)
-            # fov_inds = fov_inds & (pc_dense[:,2]>2.0)
-            pc_dense = pc_dense[fov_inds, :]
-            obj_mask = {
-                'Car': np.zeros((len(pc_dense),), dtype=np.bool),
-                'Pedestrian': np.zeros((len(pc_dense),), dtype=np.bool),
-                'Cyclist': np.zeros((len(pc_dense),), dtype=np.bool)
-            }
-            for obj in objects:
-                _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
-                _,mask = extract_pc_in_box3d(pc_dense, obj_box_3d)
-                obj_mask[obj.type] = np.logical_or(mask, obj_mask[obj.type])
-            bg_mask = (obj_mask['Car'] + obj_mask['Pedestrian'] + obj_mask['Cyclist']) == 0
-            car = np.where(obj_mask['Car'])[0]
-            # oversampling
-            ped = np.where(obj_mask['Pedestrian'])[0]
-            if ped.shape[0] > 0:
-                #ped = ped[np.random.choice(ped.shape[0], car.shape[0], replace=True)]
-                ped = ped[np.random.choice(ped.shape[0], ped.shape[0]*5, replace=True)]
-            cyc = np.where(obj_mask['Cyclist'])[0]
-            if cyc.shape[0] > 0:
-                #cyc = cyc[np.random.choice(cyc.shape[0], car.shape[0], replace=True)]
-                cyc = cyc[np.random.choice(cyc.shape[0], cyc.shape[0]*10, replace=True)]
-            fg_num = car.shape[0] + ped.shape[0] + cyc.shape[0]
-            #print('total points: ', len(pc_dense))
-            #print('fg_num: {0}, car: {1}, ped: {2}, cyc: {3}'.format(fg_num, car.shape[0], ped.shape[0], cyc.shape[0]))
-            bg = np.where(bg_mask)[0]
-            bg = bg[np.random.choice(bg.shape[0], max(self.npoints-fg_num, 0), replace=True)]
-            choice = np.concatenate((car, ped, cyc, bg), axis=0)[:self.npoints]
-            #choice = np.random.choice(pc_dense.shape[0], self.npoints, replace=True)
-            pc_rect = np.zeros((self.npoints, 4))
-            pc_rect[:,:3] = pc_dense[choice, :]
+            pc_rect = utils.load_velo_scan(os.path.join(self.kitti_path, 'aug_scene/rectified_data/{0}.bin'.format(data_idx_str)))
+            choice = np.random.choice(pc_rect.shape[0], self.npoints, replace=True)
+            pc_rect = pc_rect[choice, :]
+            if self.is_training:
+                objects = utils.read_label(os.path.join(self.kitti_path, 'aug_scene/aug_label/{0}.txt'.format(data_idx_str)))
+        objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
+        gt_boxes = [] # ground truth boxes
 
         #start = time.time()
         seg_mask = np.zeros((pc_rect.shape[0]))
         # data augmentation
-        # dont use with image now
-        if random_rotate and False:
+        if random_flip and np.random.random()>0.5: # 50% chance flipping
+            pc_rect[:,0] *= -1
+            for obj in objects:
+                obj.t = [-obj.t[0], obj.t[1], obj.t[2]]
+                # ensure that ry is [-pi, pi]
+                if obj.ry >= 0:
+                    obj.ry = np.pi - obj.ry
+                else:
+                    obj.ry = -np.pi - obj.ry
+        if random_rotate:
             ry = (np.random.random() - 0.5) * math.radians(20) # -10~10 degrees
             pc_rect[:,0:3] = rotate_points_along_y(pc_rect[:,0:3], ry)
             for obj in objects:
@@ -296,11 +263,7 @@ class Dataset(object):
             if random_shift and False: # jitter object points
                 pc_rect[obj_idxs,:3] = shift_point_cloud(pc_rect[obj_idxs,:3], 0.02)
             for idx in obj_idxs:
-                # to save time
-                if self.train_img_seg:
-                    proposal_of_point[idx] = [0, [0,0,0], 0, 0, 0, [0,0,0]]
-                else:
-                    proposal_of_point[idx] = box_encoder.encode(obj, pc_rect[idx,:3])
+                proposal_of_point[idx] = box_encoder.encode(obj, pc_rect[idx,:3])
                 gt_box_of_point[idx] = obj_box_3d
         # self.viz_frame(pc_rect, seg_mask, gt_boxes)
         # return pc_rect, seg_mask, proposal_of_point, gt_box_of_point, gt_boxes
@@ -330,11 +293,8 @@ if __name__ == '__main__':
     import projection
     VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
 
-    #npoints = 16384
-    npoints = 200000
-    # dataset = Dataset(16384, kitti_path, split, is_training=True)
-    dataset = Dataset(npoints, kitti_path, split, is_training=True, train_img_seg=True)
-    # dataset.load(True)
+    dataset = Dataset(16384, 3, kitti_path, split, is_training=True, use_aug_scene=True)
+    dataset.load(True)
     produce_thread = threading.Thread(target=dataset.load, args=(True,))
     produce_thread.start()
     i = 0

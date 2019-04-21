@@ -23,7 +23,6 @@ NUM_HEADING_BIN = 12
 NUM_CENTER_BIN = 12
 CENTER_SEARCH_RANGE = 3.0
 HEADING_SEARCH_RANGE = np.pi
-NUM_CHANNEL = 4
 NUM_SEG_CLASSES = 2
 
 class RPN(object):
@@ -158,7 +157,10 @@ class RPN(object):
             end_points: dict
         '''
         l0_xyz = tf.slice(point_cloud, [0,0,0], [-1,-1,3])
-        l0_points = tf.slice(point_cloud, [0,0,3], [-1,-1,NUM_CHANNEL-3])
+        if self.num_channel > 3:
+            l0_points = tf.slice(point_cloud, [0,0,3], [-1,-1,self.num_channel-3])
+        else:
+            l0_points = None
 
         # Set abstraction layers
         l1_xyz, l1_points = pointnet_sa_module_msg(l0_xyz, l0_points,
@@ -191,12 +193,12 @@ class RPN(object):
         end_points['point_feats'] = tf.concat([l0_xyz,l0_points], axis=-1) # (B, N, 3+C1)
         #end_points['point_feats_fuse'] = tf.concat([end_points['point_feats'], end_points['point_img_feats']], axis=-1) # (B, N, 3+C1+C2)
         #semantic_features = tf.concat([l0_points, end_points['point_img_feats']], axis=-1) # (B, N, C1+C2)
-        end_points['point_feats_fuse'] = end_points['point_feats']
+        #end_points['point_feats_fuse'] = end_points['point_feats']
         semantic_features = l0_points
         # FC layers
         net = tf_util.conv1d(semantic_features, 128, 1, padding='VALID', bn=True,
             is_training=is_training, scope='conv1d-fc1', bn_decay=bn_decay)
-        net = tf_util.dropout(net, keep_prob=0.7,
+        net = tf_util.dropout(net, keep_prob=0.5,
             is_training=is_training, scope='dp1')
         logits = tf_util.conv1d(net, NUM_SEG_CLASSES, 1,
             padding='VALID', activation_fn=None, scope='conv1d-fc2')
@@ -241,7 +243,21 @@ class RPN(object):
     def get_region_proposal_net(self, point_feats, is_training, bn_decay, end_points):
         batch_size = point_feats.get_shape()[0].value
         npoints = point_feats.get_shape()[1].value
+        # xyz is not used
         point_feats = tf.slice(point_feats, [0,0,3], [-1,-1,-1]) # (B, N, D)
+        # FC layers
+        '''
+        net = tf_util.conv1d(point_feats, 256, 1, padding='VALID', bn=True,
+            is_training=is_training, scope='rp-conv1d-fc1', bn_decay=bn_decay)
+        net = tf_util.dropout(net, keep_prob=0.5,
+            is_training=is_training, scope='rp-dp1')
+        net = tf_util.conv1d(net, 256, 1, padding='VALID', bn=True,
+            is_training=is_training, scope='rp-conv1d-fc2', bn_decay=bn_decay)
+        net = tf_util.dropout(net, keep_prob=0.5,
+            is_training=is_training, scope='rp-dp2')
+        output = tf_util.conv1d(net, NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4, 1,
+            padding='VALID', activation_fn=None, scope='rp-conv1d-fc-out')
+        '''
         net = tf.reshape(point_feats, [batch_size * npoints, -1])
         # Fully connected layers
         net = tf_util.fully_connected(net, 256, bn=True,
@@ -279,7 +295,7 @@ class RPN(object):
         #end_points['point_feats_fuse'] = tf.concat([end_points['point_feats_fuse'], seg_logits], axis=-1)
         # fg_point_feats include xyz
         fg_point_feats, end_points = point_cloud_masking(
-            end_points['point_feats_fuse'], seg_logits,
+            end_points['point_feats'], seg_logits,
             end_points, xyz_only=False) # BxNUM_FG_POINTxD
         proposals = self.get_region_proposal_net(fg_point_feats, is_training, bn_decay, end_points)
         proposals_reshaped = tf.reshape(proposals, [self.batch_size, NUM_FG_POINT, -1])
@@ -370,9 +386,9 @@ class RPN(object):
         tf.summary.scalar('size class loss', size_class_loss)
         tf.summary.scalar('size residual loss', size_res_loss)
 
-        seg_weight = 0.1
-        cls_weight = 10
-        res_weight = 10
+        seg_weight = 1
+        cls_weight = 1
+        res_weight = 1
         total_loss = seg_weight * mask_loss + \
             cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
             res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + heading_res_loss + size_res_loss)
