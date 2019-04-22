@@ -344,16 +344,16 @@ class RPN(object):
         # NOTICE: labels['center_x_residuals'] is already normalized
         center_x_residuals_normalized = tf.reduce_sum(end_points['center_x_residuals_normalized']*tf.to_float(bin_x_onehot), axis=2) # BxN
         center_x_residuals_dist = tf.norm(labels_fg['center_x_residuals_labels'] - center_x_residuals_normalized, axis=-1)
-        center_x_res_loss = huber_loss(center_x_residuals_dist, delta=2.0)
+        center_x_res_loss = huber_loss(center_x_residuals_dist, delta=1.0)
         bin_z_onehot = tf.one_hot(labels_fg['center_bin_z_labels'],
             depth=NUM_CENTER_BIN,
             on_value=1, off_value=0, axis=-1) # BxNxNUM_CENTER_BIN
         center_z_residuals_normalized = tf.reduce_sum(end_points['center_z_residuals_normalized']*tf.to_float(bin_z_onehot), axis=2) # BxN
         center_z_residuals_dist = tf.norm(labels_fg['center_z_residuals_labels'] - center_z_residuals_normalized, axis=-1)
-        center_z_res_loss = huber_loss(center_z_residuals_dist, delta=2.0)
+        center_z_res_loss = huber_loss(center_z_residuals_dist, delta=1.0)
         # y is directly regressed
         center_y_residuals_dist = tf.norm(labels_fg['center_y_residuals_labels'] - tf.gather(end_points['center_y_residuals'], 0, axis=-1), axis=-1)
-        center_y_res_loss = huber_loss(center_y_residuals_dist, delta=2.0)
+        center_y_res_loss = huber_loss(center_y_residuals_dist, delta=1.0)
         tf.summary.scalar('center_x  class loss', center_x_cls_loss)
         tf.summary.scalar('center_z  class loss', center_z_cls_loss)
         tf.summary.scalar('center_x residual loss', center_x_res_loss)
@@ -397,7 +397,7 @@ class RPN(object):
         res_weight = 1
         total_loss = seg_weight * mask_loss + \
             cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
-            res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + heading_res_loss + size_res_loss)
+            res_weight * (0.1*center_x_res_loss + 0.1*center_z_res_loss + 0.1*center_y_res_loss + 0.1*heading_res_loss + size_res_loss)
         loss_endpoints = {
             'size_class_loss': size_class_loss,
             'size_res_loss': size_res_loss,
