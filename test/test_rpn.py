@@ -56,7 +56,7 @@ def test(split, save_result=False):
         os.mkdir('./rcnn_data_'+split)
     is_training = False
     #dataset = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', split, is_training=is_training)
-    dataset = Dataset(NUM_POINT, NUM_CHANNEL, KITTI_PATH, split, is_training=is_training, use_aug_scene=False)
+    dataset = Dataset(NUM_POINT, NUM_CHANNEL, KITTI_PATH, split, is_training=(split in ['train', 'val']), use_aug_scene=False)
     # data loading threads
     produce_thread = Thread(target=dataset.load, args=(False,))
     produce_thread.start()
@@ -183,8 +183,8 @@ def test(split, save_result=False):
             nms_indices.append(ind_val[i])
             frame_data = {
                 'frame_id': batch_data['ids'][i],
-                'segmentation': preds_val[i],
-                'fg_indices': indices_val[i],
+                'segmentation': preds_val[i], # only point seg
+                'fg_indices': indices_val[i], # ensemble with img seg
                 'centers': centers_val[i],
                 'angles': angles_val[i],
                 'sizes': sizes_val[i],
