@@ -14,6 +14,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
+sys.path.append(os.path.join(ROOT_DIR, 'train'))
 from data_conf import g_type2onehotclass
 from rpn_dataset import Dataset
 from train_util import compute_proposal_recall, compute_box3d_iou
@@ -30,6 +31,7 @@ parser.add_argument('--model_path', default=None, help='Restore model path e.g. 
 parser.add_argument('--img_model_path', default=None, help='Restore image seg model path e.g. ./frozen_inference_graph.pb [default: None]')
 parser.add_argument('--kitti_path', default='/data/ssd/public/jlliu/Kitti/object', help='Kitti root path')
 parser.add_argument('--split', default='val', help='Data split to use [default: val]')
+parser.add_argument('--no_intensity', action='store_true', help='Only use XYZ for training')
 FLAGS = parser.parse_args()
 
 # Set training configurations
@@ -40,6 +42,11 @@ GPU_INDEX = FLAGS.gpu
 KITTI_PATH = FLAGS.kitti_path
 SPLIT = FLAGS.split
 
+if FLAGS.no_intensity:
+    NUM_CHANNEL = 3
+else:
+    NUM_CHANNEL = 4
+
 def log_string(out_str):
     print(out_str)
 
@@ -49,7 +56,7 @@ def test(split, save_result=False):
         os.mkdir('./rcnn_data_'+split)
     is_training = False
     #dataset = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', split, is_training=is_training)
-    dataset = Dataset(NUM_POINT, KITTI_PATH, split, is_training=is_training)
+    dataset = Dataset(NUM_POINT, NUM_CHANNEL, KITTI_PATH, split, is_training=is_training, use_aug_scene=False)
     # data loading threads
     produce_thread = Thread(target=dataset.load, args=(False,))
     produce_thread.start()
@@ -177,6 +184,7 @@ def test(split, save_result=False):
             frame_data = {
                 'frame_id': batch_data['ids'][i],
                 'segmentation': preds_val[i],
+                'fg_indices': indices_val[i],
                 'centers': centers_val[i],
                 'angles': angles_val[i],
                 'sizes': sizes_val[i],
