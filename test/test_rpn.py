@@ -14,6 +14,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
+sys.path.append(os.path.join(ROOT_DIR, 'train'))
 from data_conf import g_type2onehotclass
 from rpn_dataset import Dataset
 from train_util import compute_proposal_recall, compute_box3d_iou
@@ -49,7 +50,7 @@ def test(split, save_result=False):
         os.mkdir('./rcnn_data_'+split)
     is_training = False
     #dataset = Dataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', split, is_training=is_training)
-    dataset = Dataset(NUM_POINT, KITTI_PATH, split, is_training=is_training)
+    dataset = Dataset(NUM_POINT, KITTI_PATH, split, is_training=(split in ['train', 'val']))
     # data loading threads
     produce_thread = Thread(target=dataset.load, args=(False,))
     produce_thread.start()
@@ -176,7 +177,8 @@ def test(split, save_result=False):
             nms_indices.append(ind_val[i])
             frame_data = {
                 'frame_id': batch_data['ids'][i],
-                'segmentation': preds_val[i],
+                'segmentation': preds_val[i], # only point seg
+                'fg_indices': indices_val[i], # ensemble with img seg
                 'centers': centers_val[i],
                 'angles': angles_val[i],
                 'sizes': sizes_val[i],

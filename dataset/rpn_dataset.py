@@ -79,7 +79,7 @@ class Dataset(object):
             for x in range(self.AUG_X):
                 #start = time.time()
                 frame_data = \
-                    self.load_frame_data(frame_id, random_flip=aug, random_rotate=aug, random_shift=aug, pca_jitter=aug)
+                    self.load_frame_data(frame_id, random_flip=aug, random_rotate=aug, random_shift=aug, pca_jitter=False)
                 #print(time.time() - start)
                 frame_data['frame_id'] = frame_id
                 self.data_buffer.put(frame_data)
@@ -254,8 +254,9 @@ class Dataset(object):
                 # label without 3d points
                 # print('skip object without points')
                 continue
-            seg_mask[obj_mask] = g_type2onehotclass[obj.type]
-            #seg_mask[obj_mask] = 1
+            # IMPORTANT: this must match with NUM_SEG_CLASSES
+            #seg_mask[obj_mask] = g_type2onehotclass[obj.type]
+            seg_mask[obj_mask] = 1
             gt_boxes.append(obj_box_3d)
             obj_idxs = np.where(obj_mask)[0]
             # data augmentation
@@ -295,7 +296,7 @@ if __name__ == '__main__':
     VGG_config = namedtuple('VGG_config', 'vgg_conv1 vgg_conv2 vgg_conv3 vgg_conv4 l2_weight_decay')
 
     dataset = Dataset(16384, 3, kitti_path, split, is_training=True, use_aug_scene=True)
-    dataset.load(True)
+    #dataset.load(True)
     produce_thread = threading.Thread(target=dataset.load, args=(True,))
     produce_thread.start()
     i = 0
