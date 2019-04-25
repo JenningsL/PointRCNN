@@ -246,39 +246,16 @@ class RPN(object):
         # xyz is not used
         point_feats = tf.slice(point_feats, [0,0,3], [-1,-1,-1]) # (B, N, D)
         # FC layers
-        '''
         net = tf_util.conv1d(point_feats, 256, 1, padding='VALID', bn=True,
             is_training=is_training, scope='rp-conv1d-fc1', bn_decay=bn_decay)
         net = tf_util.dropout(net, keep_prob=0.5,
             is_training=is_training, scope='rp-dp1')
-        net = tf_util.conv1d(net, 256, 1, padding='VALID', bn=True,
-            is_training=is_training, scope='rp-conv1d-fc2', bn_decay=bn_decay)
-        net = tf_util.dropout(net, keep_prob=0.5,
-            is_training=is_training, scope='rp-dp2')
+        #net = tf_util.conv1d(net, 256, 1, padding='VALID', bn=True,
+        #    is_training=is_training, scope='rp-conv1d-fc2', bn_decay=bn_decay)
+        #net = tf_util.dropout(net, keep_prob=0.5,
+        #    is_training=is_training, scope='rp-dp2')
         output = tf_util.conv1d(net, NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4, 1,
             padding='VALID', activation_fn=None, scope='rp-conv1d-fc-out')
-        '''
-        net = tf.reshape(point_feats, [batch_size * npoints, -1])
-        # Fully connected layers
-        net = tf_util.fully_connected(net, 256, bn=True,
-            is_training=is_training, scope='rp-fc0', bn_decay=bn_decay)
-        #net = tf_util.dropout(net, keep_prob=0.7,
-        #    is_training=is_training, scope='rp-dp0')
-        net = tf_util.fully_connected(net, 256, bn=True,
-            is_training=is_training, scope='rp-fc1', bn_decay=bn_decay)
-        #net = tf_util.dropout(net, keep_prob=0.7,
-        #    is_training=is_training, scope='rp-dp1')
-        net = tf_util.fully_connected(net, 512, bn=True,
-            is_training=is_training, scope='rp-fc2', bn_decay=bn_decay)
-        #net = tf_util.dropout(net, keep_prob=0.7,
-        #    is_training=is_training, scope='rp-dp2')
-        # The first NUM_CENTER_BIN*2*2: CENTER_BIN class scores and bin residuals for (x,z)
-        # next 1: center residual for y
-        # next NUM_HEADING_BIN*2: heading bin class scores and residuals
-        # next NUM_SIZE_CLUSTER*4: size cluster class scores and residuals(l,w,h)
-        output = tf_util.fully_connected(net,
-            NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4,
-            activation_fn=None, scope='rp-fc3')
         end_points['proposals'] = output
         return output
 

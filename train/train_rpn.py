@@ -22,7 +22,6 @@ import train_util
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
-parser.add_argument('--model', default='frustum_pointnets_v1', help='Model name [default: frustum_pointnets_v1]')
 parser.add_argument('--log_dir', default='log', help='Log dir [default: log]')
 parser.add_argument('--num_point', type=int, default=16384, help='Point Number [default: 16384]')
 parser.add_argument('--max_epoch', type=int, default=201, help='Epoch to run [default: 201]')
@@ -91,7 +90,7 @@ def get_bn_decay(batch):
 
 TRAIN_DATASET = Dataset(NUM_POINT, NUM_CHANNEL, '/data/ssd/public/jlliu/Kitti/object', 'train', is_training=True, use_aug_scene=True)
 # data loading threads
-train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(False,))
+train_produce_thread = Thread(target=TRAIN_DATASET.load, args=(True,))
 train_produce_thread.start()
 
 def train():
@@ -147,7 +146,7 @@ def train():
 
         # Create a session
         config = tf.ConfigProto()
-        config.gpu_options.allow_growth = True
+        config.gpu_options.allow_growth = False
         config.allow_soft_placement = True
         config.log_device_placement = False
         sess = tf.Session(config=config)
@@ -187,8 +186,7 @@ def train():
             #     log_string("Model saved in file: {0}, val_loss: {1}".format(save_path, val_loss))
             save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
             log_string("Model saved in file: {0}".format(save_path))
-            if eval_iou_recall:
-                val_loss = eval_one_epoch(sess, ops, placeholders, test_writer, eval_iou_recall)
+            val_loss = eval_one_epoch(sess, ops, placeholders, test_writer, True)
     TRAIN_DATASET.stop_loading()
     train_produce_thread.join()
 
