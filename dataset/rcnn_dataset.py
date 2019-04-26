@@ -179,58 +179,20 @@ class Dataset(object):
 
         return ProposalObject(np.array([center[0],center[1],center[2],l, h, w, ry]))
 
-    def preprocess(self, proposal_path):
-        if not os.path.exists(self.data_dir):
-            os.mkdir(self.data_dir)
-        print('Preprocessing proposals...')
-        with open(proposal_path, 'rb') as f:
-            frame_ids = pickle.load(f)
-            segmentation = pickle.load(f)
-            centers = pickle.load(f)
-            angles = pickle.load(f)
-            sizes = pickle.load(f)
-            proposal_boxes = pickle.load(f)
-            nms_indices = pickle.load(f)
-            scores = pickle.load(f)
-            pc_choices = pickle.load(f)
-        for i in range(len(frame_ids)):
-            print(frame_ids[i])
-            frame_data = {
-                'frame_id': frame_ids[i],
-                'segmentation': segmentation[i],
-                'centers': centers[i],
-                'angles': angles[i],
-                'sizes': sizes[i],
-                'proposal_boxes': proposal_boxes[i],
-                'nms_indices': nms_indices[i],
-                'scores': scores[i],
-                'pc_choices': pc_choices[i]
-            }
-            with open(os.path.join(self.data_dir, frame_ids[i]+'.pkl'), 'wb') as fout:
-                pickle.dump(frame_data, fout)
-
-        print('Preprocess proposals done.')
-
     def get_proposals(self, rpn_out):
-        # Do nms on different parameters
-        '''
+        proposals = []
         if self.split == 'train':
-            nms_thres = 0.7
-            max_keep = 100
+            nms_thres = 0.85
+            max_keep = 300
         else:
             nms_thres = 0.8
-            max_keep = 50
+            max_keep = 100
         bev_boxes = []
         for ry, center, size in zip(rpn_out['angles'], rpn_out['centers'], rpn_out['sizes']):
             bev_boxes.append([center[0], center[2], size[0], size[2], 180*ry/np.pi])
         bev_boxes = np.array(bev_boxes)
         nms_idx = nms_rotate_cpu(bev_boxes, rpn_out['scores'], nms_thres, max_keep)
         for ind in nms_idx:
-        '''
-        proposals = []
-        for ind in rpn_out['nms_indices']:
-            if ind == -1:
-                continue
             # to ProposalObject
             x,y,z = rpn_out['centers'][ind]
             l, h, w = rpn_out['sizes'][ind]
@@ -238,68 +200,6 @@ class Dataset(object):
             proposal = ProposalObject(np.array([x,y,z,l, h, w, ry]))
             proposals.append(proposal)
         return proposals
-
-    def stat_proposal(self):
-        '''statistic of proposals'''
-        total_iou_3d = 0
-        total_iou_2d = 0
-        total_angle_res = 0
-        total = 0
-        total_num = 0
-        total_recall = 0
-        total_gt = 0
-        for frame_id in self.frame_ids:
-            print(frame_id)
-            try:
-                with open(os.path.join(self.data_dir, frame_id+'.pkl'), 'rb') as fin:
-                    rpn_out = pickle.load(fin)
-            except Exception as e:
-                print(e)
-                continue
-            data_idx = int(frame_id)
-            pc_velo = self.kitti_dataset.get_lidar(data_idx)
-            image = self.kitti_dataset.get_image(data_idx)
-            calib = self.kitti_dataset.get_calibration(data_idx) # 3 by 4 matrix
-            img_height, img_width = image.shape[0:2]
-            _, pc_image_coord, img_fov_inds = get_lidar_in_image_fov(pc_velo[:,0:3],
-                calib, 0, 0, img_width, img_height, True)
-            pc_velo = pc_velo[img_fov_inds, :]
-            pc_rect = np.zeros_like(pc_velo)
-            pc_rect[:,0:3] = calib.project_velo_to_rect(pc_velo[:,0:3])
-            pc_rect[:,3] = pc_velo[:,3]
-            objects = self.kitti_dataset.get_label_objects(data_idx)
-            objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
-            proposals = self.get_proposals(rpn_out)
-            gt_boxes = [] # ground truth boxes
-            gt_boxes_xy = []
-            recall = np.zeros((len(objects),))
-            for obj in objects:
-                _,obj_box_3d = utils.compute_box_3d(obj, calib.P)
-                # skip label with no point
-                _,obj_mask = extract_pc_in_box3d(pc_rect, obj_box_3d)
-                if np.sum(obj_mask) == 0:
-                    continue
-                gt_boxes.append(obj_box_3d)
-                gt_boxes_xy.append(obj_box_3d[:4, [0,2]])
-            for prop in proposals:
-                b2d,prop_box_3d = utils.compute_box_3d(prop, calib.P)
-                prop_box_xy = prop_box_3d[:4, [0,2]]
-                gt_idx, gt_iou = find_match_label(prop_box_xy, gt_boxes_xy)
-                if gt_idx == -1:
-                    continue
-                if gt_iou >= 0.5:
-                    recall[gt_idx] = 1
-                total_iou_2d += gt_iou
-                ry_residual = abs(prop.ry - objects[gt_idx].ry)
-                total_angle_res += ry_residual
-                total += 1
-            total_recall += np.sum(recall)
-            total_gt += len(objects)
-            total_num += len(proposals)
-        print('Average IOU 2d {0}'.format(total_iou_2d/total))
-        print('Average angle residual {0}'.format(total_angle_res/total))
-        print('Average proposal number: {0}'.format(total_num/len(self.frame_ids)))
-        print('Recall: {0}'.format(float(total_recall)/total_gt))
 
     def fill_proposals_with_gt(self, objects):
         gt_proposals = []
@@ -335,18 +235,18 @@ class Dataset(object):
             calib, 0, 0, img_width, img_height, True)
         pc_velo = pc_velo[img_fov_inds, :]
         # Same point sampling as RPN
-        # choice = rpn_out['pc_choices']
-        # point_set = pc_velo[choice, :]
-        point_set = pc_velo
+        choice = rpn_out['pc_choices']
+        point_set = pc_velo[choice, :]
+        # point_set = pc_velo
         pc_rect = np.zeros_like(point_set)
         pc_rect[:,0:3] = calib.project_velo_to_rect(point_set[:,0:3])
         pc_rect[:,3] = point_set[:,3]
         # Segmentation results from RPN
         seg_one_hot = np.zeros((pc_rect.shape[0], 2))
-        # bg_ind = rpn_out['segmentation'] == 0
-        # fg_ind = rpn_out['segmentation'] == 1
-        # seg_one_hot[bg_ind,0] = 1
-        # seg_one_hot[fg_ind,1] = 1
+        bg_ind = rpn_out['segmentation'] == 0
+        fg_ind = rpn_out['segmentation'] == 1
+        seg_one_hot[bg_ind,0] = 1
+        seg_one_hot[fg_ind,1] = 1
         pc_rect = np.concatenate((pc_rect, seg_one_hot), axis=-1) # 6 channels
         objects = filter(lambda obj: obj.type in self.types_list and obj.difficulty in self.difficulties_list, objects)
         gt_boxes = [] # ground truth boxes
@@ -417,9 +317,9 @@ class Dataset(object):
             return False
         # expand proposal boxes
         proposal_expand = copy.deepcopy(proposal_)
-        # proposal_expand.l += 1
-        # proposal_expand.w += 1
-        _, box_3d = utils.compute_box_3d(proposal_, calib.P)
+        proposal_expand.l += 0.5
+        proposal_expand.w += 0.5
+        _, box_3d = utils.compute_box_3d(proposal_expand, calib.P)
         _, mask = extract_pc_in_box3d(pc_rect, box_3d)
         # ignore proposal with no points
         if(np.sum(mask) == 0):
@@ -473,20 +373,6 @@ class Dataset(object):
 if __name__ == '__main__':
     kitti_path = sys.argv[1]
     split = sys.argv[2]
-
-    # statistic
-    '''
-    dataset = Dataset(512, kitti_path, split, True, ['Car'], [1])
-    dataset.stat_proposal()
-    sys.exit()
-    '''
-
-    # preprocess
-    '''
-    dataset = Dataset(512, kitti_path, split, True)
-    dataset.preprocess('rpn_out_{0}.pkl'.format(split))
-    sys.exit()
-    '''
 
     sys.path.append('models')
     from collections import namedtuple
@@ -554,4 +440,3 @@ if __name__ == '__main__':
     dataset.stop_loading()
     print('stop loading')
     produce_thread.join()
-

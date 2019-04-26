@@ -131,14 +131,12 @@ def train():
             # Note: when training, the moving_mean and moving_variance need to be updated.
             update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
             with tf.control_dependencies(update_ops):
-                train_op = optimizer.minimize(loss, global_step=batch)
-                '''
+                # train_op = optimizer.minimize(loss, global_step=batch)
                 train_op = slim.learning.create_train_op(
                     loss,
                     optimizer,
                     clip_gradient_norm=1.0,
                     global_step=batch)
-                '''
 
             # Add ops to save and restore all the variables.
             saver = tf.train.Saver()
