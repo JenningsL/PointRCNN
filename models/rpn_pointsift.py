@@ -3,7 +3,6 @@ from __future__ import print_function
 import sys
 import os
 import tensorflow as tf
-slim = tf.contrib.slim
 import numpy as np
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
@@ -102,27 +101,6 @@ class RPN_PointSIFT(RPN):
         end_points['foreground_logits'] = logits
 
         return end_points
-
-    def get_region_proposal_net(self, point_feats, is_training, bn_decay, end_points):
-        batch_size = point_feats.get_shape()[0].value
-        npoints = point_feats.get_shape()[1].value
-        # xyz is not used
-        point_feats = tf.slice(point_feats, [0,0,3], [-1,-1,-1]) # (B, N, D)
-        # FC layers
-        net = tf_util.conv1d(point_feats, 128, 1, padding='VALID', bn=True,
-            is_training=is_training, scope='rp-conv1d-fc1', bn_decay=bn_decay)
-        #net = tf_util.dropout(net, keep_prob=0.5,
-        #    is_training=is_training, scope='rp-dp1')
-        #net = tf_util.conv1d(net, 256, 1, padding='VALID', bn=True,
-        #    is_training=is_training, scope='rp-conv1d-fc2', bn_decay=bn_decay)
-        # The first NUM_CENTER_BIN*2*2: CENTER_BIN class scores and bin residuals for (x,z)
-        # next 1: center residual for y
-        # next NUM_HEADING_BIN*2: heading bin class scores and residuals
-        # next NUM_SIZE_CLUSTER*4: size cluster class scores and residuals(l,w,h)
-        output = tf_util.conv1d(net, NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4, 1,
-            padding='VALID', activation_fn=None, scope='rp-conv1d-fc-out')
-        end_points['proposals'] = output
-        return output
 
 if __name__=='__main__':
     with tf.Graph().as_default():
