@@ -79,7 +79,7 @@ class Sample(object):
 
 
 class FrustumDataset(object):
-    def __init__(self, npoints, kitti_path, batch_size, split, data_dir,
+    def __init__(self, npoints, kitti_path, batch_size, split, data_dir, is_training=False,
                  augmentX=1, random_shift=False, rotate_to_center=False, random_flip=False,
                  use_gt_prop=False):
         self.npoints = npoints
@@ -92,8 +92,8 @@ class FrustumDataset(object):
         self.use_gt_prop = use_gt_prop
         #self.num_channel = 7
         self.num_channel = 4
-        self.is_testing = (split not in ['train', 'val'])
-        if not self.is_testing:
+        self.is_training = is_training
+        if split in ['train', 'val']:
             self.kitti_dataset = kitti_object(kitti_path, 'training')
             self.frame_ids = self.load_split_ids(split)
             random.shuffle(self.frame_ids)
@@ -117,11 +117,11 @@ class FrustumDataset(object):
     def get_proposals(self, rpn_out):
         proposals = []
         if self.split == 'train':
-            nms_thres = 0.7
-            max_keep = 100
+            nms_thres = 0.85
+            max_keep = 300
         else:
             nms_thres = 0.8
-            max_keep = 50
+            max_keep = 100
         bev_boxes = []
         for ry, center, size in zip(rpn_out['angles'], rpn_out['centers'], rpn_out['sizes']):
             bev_boxes.append([center[0], center[2], size[0], size[2], 180*ry/np.pi])
@@ -140,29 +140,23 @@ class FrustumDataset(object):
         with open(os.path.join(self.kitti_path, split + '.txt')) as f:
             return [line.rstrip('\n') for line in f]
 
-    def do_sampling(self, frame_data, pos_ratio=0.5, is_eval=False):
-        if self.is_testing:
+    def do_sampling(self, frame_data, pos_ratio=0.5):
+        if not self.is_training:
             return frame_data['samples']
         samples = frame_data['samples']
         pos_idxs = frame_data['pos_idxs']
         neg_idxs = [i for i in range(0, len(samples)) if i not in pos_idxs]
         random.shuffle(neg_idxs)
 
-        if is_eval:
-            need_neg = int(len(neg_idxs) * 0.5)
-            #need_neg = len(neg_idxs)
-            #need_neg = 1
-            keep_idxs = pos_idxs + neg_idxs[:need_neg]
-            #keep_idxs = pos_idxs
-        elif pos_ratio == 0.0:
+        if pos_ratio == 0.0:
             keep_idxs = neg_idxs
         elif pos_ratio == 1.0:
             keep_idxs = pos_idxs
         else:
+            '''
             cyclist_idxs = [i for i in pos_idxs if samples[i].cls_label == g_type2onehotclass['Cyclist']]
             pedestrian_idxs = [i for i in pos_idxs if samples[i].cls_label == g_type2onehotclass['Pedestrian']]
             car_idxs = [i for i in pos_idxs if samples[i].cls_label == g_type2onehotclass['Car']]
-            '''
             # downsample
             car_idxs = random.sample(car_idxs, int(len(car_idxs) * 0.5))
             # oversample
@@ -170,10 +164,8 @@ class FrustumDataset(object):
             pedestrian_idxs = pedestrian_idxs * 5
             pos_idxs = car_idxs + cyclist_idxs + pedestrian_idxs
             '''
-
             need_neg = int(len(pos_idxs) * ((1-pos_ratio)/pos_ratio))
             keep_idxs = pos_idxs + neg_idxs[:need_neg]
-            #keep_idxs = pos_idxs
         random.shuffle(keep_idxs)
         p = 0
         n = 0
@@ -200,13 +192,13 @@ class FrustumDataset(object):
             item = self.sample_buffer.get()
             self.sample_buffer.task_done()
 
-    def load_buffer_repeatedly(self, pos_ratio=0.5, is_eval=False):
+    def load(self, pos_ratio=0.5):
         i = -1
         last_sample_id = None
         while not self.stop:
             frame_id = self.frame_ids[i]
             frame_data = self.load_frame_data(frame_id)
-            samples = self.do_sampling(frame_data, pos_ratio=pos_ratio, is_eval=is_eval)
+            samples = self.do_sampling(frame_data, pos_ratio=pos_ratio)
             for s in samples:
                 s.frame_id = frame_id
                 self.sample_buffer.put(s)
@@ -316,6 +308,7 @@ class FrustumDataset(object):
         proposal_expand = copy.deepcopy(proposal)
         proposal_expand.l += 0.5
         proposal_expand.w += 0.5
+        proposal_expand.h += 0.5
         _, prop_corners_3d = utils.compute_box_3d(proposal_expand, calib.P)
         _,prop_inds = extract_pc_in_box3d(pc_rect, prop_corners_3d)
         pc_in_prop_box = pc_rect[prop_inds,:]
@@ -464,7 +457,7 @@ class FrustumDataset(object):
         pc_rect[:,3] = pc_velo[:,3]
         gt_boxes_xy = []
         gt_boxes_3d = []
-        if not self.is_testing:
+        if self.is_training:
             objects = self.kitti_dataset.get_label_objects(data_idx)
         else:
             objects = []
@@ -476,13 +469,13 @@ class FrustumDataset(object):
         recall = np.zeros((len(objects),))
 
         if self.use_gt_prop:
-            assert(self.is_testing==False)
+            assert(self.is_training==True)
             proposals = self.get_proposals_from_label(objects, calib, self.augmentX)
         else:
             proposals = self.get_proposals(rpn_out)
             # add more training samples
-            if self.split == 'train':
-                proposals += self.get_proposals_from_label(objects, calib, 1)
+            #if self.split == 'train':
+            #    proposals += self.get_proposals_from_label(objects, calib, 1)
 
         samples = []
         pos_idxs = []
@@ -496,10 +489,11 @@ class FrustumDataset(object):
                 # print('skip proposal behind camera')
                 continue
             # testing
-            if self.is_testing:
+            if not self.is_training:
                 sample = self.get_one_sample(prop, pc_rect, image, calib, -1, None, None, data_idx_str, img_seg_map)
                 if sample:
                     samples.append(sample)
+                continue
             # training
             prop_box_xy = prop_corners_3d[:4, [0,2]]
             # find corresponding label object
@@ -513,8 +507,8 @@ class FrustumDataset(object):
                 if sample:
                     samples.append(sample)
                     neg_box.append(prop_corners_3d)
-            elif iou_with_gt >= 0.55 \
-                or (iou_with_gt >= 0.45 and objects[obj_idx].type in ['Pedestrian', 'Cyclist']):
+            elif iou_with_gt >= 0.6 \
+                or (iou_with_gt >= 0.5 and objects[obj_idx].type in ['Pedestrian', 'Cyclist']):
                 obj_type = objects[obj_idx].type
                 avg_iou.append(iou_with_gt)
 
@@ -575,12 +569,12 @@ if __name__ == '__main__':
     dataset = FrustumDataset(512, kitti_path, 16, split, data_dir='./rcnn_data_'+split,
                  augmentX=augmentX, random_shift=True, rotate_to_center=True, random_flip=True,
                  use_gt_prop=use_gt_prop)
-    #dataset.load_buffer_repeatedly(0.5)
+    #dataset.load(0.5)
     dataset.load_frame_data('000001')
     dataset.get_next_batch(wait=False)
 
     '''
-    produce_thread = threading.Thread(target=dataset.load_buffer_repeatedly, args=(1.0,))
+    produce_thread = threading.Thread(target=dataset.load, args=(1.0,))
     produce_thread.start()
 
     while(True):
