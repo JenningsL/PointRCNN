@@ -222,7 +222,7 @@ def test(TEST_DATASET, output_filename, result_dir=None):
     Write test results to KITTI format label files.
     todo (rqi): support variable number of points.
     '''
-    val_loading_thread = Thread(target=TEST_DATASET.load_buffer_repeatedly, args=(0.5, True))
+    val_loading_thread = Thread(target=TEST_DATASET.load)
     val_loading_thread.start()
 
     batch_size = TEST_DATASET.batch_size
@@ -298,7 +298,7 @@ def test(TEST_DATASET, output_filename, result_dir=None):
     if FLAGS.dump_result:
         with open(output_filename, 'wp') as fp:
             pickle.dump(detection_objects, fp)
-    detection_objects = nms_on_bev(detection_objects, TEST_DATASET, 0.01)
+    detection_objects = nms_on_bev(detection_objects, TEST_DATASET, 0.1)
     # Write detection results for KITTI evaluation
     write_detection_results(result_dir, detection_objects)
     output_dir = os.path.join(result_dir, 'data')
@@ -333,7 +333,7 @@ if __name__=='__main__':
     NUM_POINT = FLAGS.num_point
 
     TEST_DATASET = FrustumDataset(NUM_POINT, FLAGS.kitti_path, BATCH_SIZE, FLAGS.split,
-                 data_dir='./rcnn_data_'+FLAGS.split,
+                 data_dir='./rcnn_data_'+FLAGS.split, is_training=False,
                  augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, use_gt_prop=False)
 
     test(TEST_DATASET, FLAGS.output+'.pickle', FLAGS.output)

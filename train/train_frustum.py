@@ -70,13 +70,13 @@ BN_DECAY_CLIP = 0.99
 
 # load data set in background thread, remember to join data_loading_thread somewhere
 TRAIN_DATASET = FrustumDataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', BATCH_SIZE, 'train',
-             data_dir='./rcnn_data_train',
+             data_dir='./rcnn_data_train', is_training=True,
              augmentX=5, random_shift=True, rotate_to_center=True, random_flip=True, use_gt_prop=FLAGS.use_gt_prop)
 TEST_DATASET = FrustumDataset(NUM_POINT, '/data/ssd/public/jlliu/Kitti/object', BATCH_SIZE, 'val',
-             data_dir='./rcnn_data_val',
+             data_dir='./rcnn_data_val', is_training=True,
              augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, use_gt_prop=FLAGS.use_gt_prop)
-train_loading_thread = Thread(target=TRAIN_DATASET.load_buffer_repeatedly, args=(FLAGS.pos_ratio, False))
-val_loading_thread = Thread(target=TEST_DATASET.load_buffer_repeatedly, args=(FLAGS.pos_ratio, True))
+train_loading_thread = Thread(target=TRAIN_DATASET.load, args=(FLAGS.pos_ratio,))
+val_loading_thread = Thread(target=TEST_DATASET.load, args=(FLAGS.pos_ratio,))
 train_loading_thread.start()
 val_loading_thread.start()
 
@@ -226,8 +226,6 @@ def train():
             sys.stdout.flush()
 
             train_one_epoch(sess, ops, train_writer)
-            if epoch >= 10 or True:
-                val_loss, avg_cls_acc, estimate_acc = eval_one_epoch(sess, ops, test_writer)
             # Save the variables to disk.
             # if val_loss < best_val_loss:
             #     best_val_loss = val_loss
@@ -235,6 +233,7 @@ def train():
             #     log_string("Model saved in file: {0}, val_loss: {1}".format(save_path, val_loss))
             save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt.%03d" % epoch))
             log_string("Model saved in file: {0}".format(save_path))
+            val_loss, avg_cls_acc, estimate_acc = eval_one_epoch(sess, ops, test_writer)
         train_loading_thread.stop()
         val_loading_thread.stop()
 
