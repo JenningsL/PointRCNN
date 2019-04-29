@@ -10,6 +10,7 @@ import cPickle as pickle
 from threading import Thread
 from shapely.geometry import Polygon
 import time
+from PIL import Image
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(BASE_DIR)
@@ -38,7 +39,7 @@ parser.add_argument('--rcnn_model', type=str, default='log_rcnn/model.ckpt', hel
 parser.add_argument('--output', type=str, default='test_results', help='output file/folder name [default: test_results]')
 parser.add_argument('--kitti_path', type=str, default='/data/ssd/public/jlliu/Kitti/object', help='Kitti root path')
 parser.add_argument('--split', type=str, default='test', help='Data split to use [default: test]')
-parser.add_argument('--dump_result', action='store_true', help='If true, also dump results to .pickle file')
+parser.add_argument('--save_img_seg', action='store_true', help='If true, also save image segmentation result')
 FLAGS = parser.parse_args()
 
 # only batch_size=1 is supported now
@@ -47,8 +48,9 @@ BATCH_SIZE_RCNN = 32
 GPU_INDEX = FLAGS.gpu
 NUM_POINT = FLAGS.num_point
 NUM_POINT_RCNN = 512
+NUM_CHANNEL = 4
 
-RPN_DATASET = Dataset(NUM_POINT, FLAGS.kitti_path, FLAGS.split, is_training=False)
+RPN_DATASET = Dataset(NUM_POINT, NUM_CHANNEL, FLAGS.kitti_path, FLAGS.split, is_training=False, use_aug_scene=False)
 RCNN_DATASET = FrustumDataset(NUM_POINT_RCNN, FLAGS.kitti_path, BATCH_SIZE_RCNN, FLAGS.split,
              data_dir='./rcnn_data_'+FLAGS.split,
              augmentX=1, random_shift=False, rotate_to_center=True, random_flip=False, use_gt_prop=False)
@@ -97,6 +99,10 @@ def get_session_and_models():
     return sess1, img_seg_net, sess2, rpn_model, sess3, rcnn_model
 
 def test(result_dir=None):
+    seg_result_path = os.path.join(result_dir, 'segmentation_result')
+    if FLAGS.save_img_seg and not os.path.isdir(seg_result_path):
+        os.makedirs(seg_result_path)
+
     produce_thread = Thread(target=RPN_DATASET.load, args=(False,))
     produce_thread.start()
 
@@ -135,6 +141,11 @@ def test(result_dir=None):
         img_seg_binary *= np.array([0, 1]) # weights
         print_flush('img seg time: ' + str(time.time() - start))
         start = time.time()
+
+        if FLAGS.save_img_seg:
+            img_seg_mask = np.argmax(full_img_seg, axis=-1).astype(int)
+            img_seg_mask = Image.fromarray(img_seg_mask)
+            img_seg_mask.save(os.path.join(seg_result_path, batch_data['ids'][0]+'.png'))
 
         seg_logits_val, centers_val, angles_val, sizes_val, nms_ind_val, scores_val \
         = sess2.run(
@@ -226,7 +237,7 @@ def test(result_dir=None):
         center_list, heading_cls_list, heading_res_list,
         size_cls_list, size_res_list, rot_angle_list, score_list, prob_list,
         proposal_score_list, RCNN_DATASET)
-    detection_objects = test_frustum.nms_on_bev(detection_objects, RCNN_DATASET, 0.01)
+    detection_objects = test_frustum.nms_on_bev(detection_objects, RCNN_DATASET, 0.1)
     # Write detection results for KITTI evaluation
     test_frustum.write_detection_results(result_dir, detection_objects)
     output_dir = os.path.join(result_dir, 'data')
