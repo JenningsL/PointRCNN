@@ -143,7 +143,8 @@ def test(result_dir=None):
         start = time.time()
 
         if FLAGS.save_img_seg:
-            img_seg_mask = np.argmax(full_img_seg, axis=-1).astype(int)
+            img_seg_mask = np.argmax(full_img_seg[0], axis=-1).astype(np.uint8)
+            print(img_seg_mask.shape)
             img_seg_mask = Image.fromarray(img_seg_mask)
             img_seg_mask.save(os.path.join(seg_result_path, batch_data['ids'][0]+'.png'))
 
