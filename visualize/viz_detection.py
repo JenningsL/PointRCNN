@@ -2,13 +2,21 @@ import sys
 import os
 import re
 import numpy as np
+import cv2
 import matplotlib
 matplotlib.use('Agg')
-# import mayavi.mlab as mlab
-# from mayavi_utils import draw_lidar, draw_gt_boxes3d
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+sys.path.append(os.path.join(ROOT_DIR, 'visualize/mayavi'))
+sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
+import mayavi.mlab as mlab
+mlab.options.offscreen = True
+from mayavi_utils import draw_lidar, draw_gt_boxes3d
 import matplotlib.pyplot as plt
 import argparse
 import matplotlib.patheffects as patheffects
+from data_conf import type_whitelist, difficulties_whitelist
+from data_util import extract_pc_in_box3d
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
@@ -19,6 +27,7 @@ import kitti_util as utils
 from kitti_object import *
 
 import vis_utils
+from img_seg import add_mask_to_img
 
 type_whitelist = ['Car', 'Pedestrian', 'Cyclist']
 BOX_COLOUR_SCHEME = {
@@ -99,14 +108,15 @@ def draw_boxes(objects, calib, plot_axes):
                                        foreground='black')])
     return all_corners
 
-def visualize(dataset, frame_id, prediction, show_3d=False, output_dir=None):
-    fig_size = (10, 6.1)
+def visualize(dataset, frame_id, prediction, seg_mask=None, show_3d=False, output_dir=None):
+    fig_size = (12.42,3.75)
     is_video = type(dataset).__name__ == 'kitti_object_video'
     # pred_fig, pred_2d_axes, pred_3d_axes = \
     #     vis_utils.visualization(dataset.image_dir,
     #                             int(frame_id),
     #                             display=False,
     #                             fig_size=fig_size)
+
     pred_fig, pred_3d_axes = vis_utils.visualize_single_plot(
         dataset.image_dir, int(frame_id), is_video, flipped=False,
         display=False, fig_size=fig_size)
@@ -115,6 +125,7 @@ def visualize(dataset, frame_id, prediction, show_3d=False, output_dir=None):
     # 2d visualization
     # draw groundtruth
     # labels = dataset.get_label_objects(frame_id)
+    # labels = filter(lambda obj: obj.type in type_whitelist and obj.difficulty in difficulties_whitelist, labels)
     # draw_boxes(labels, calib, pred_2d_axes)
     # draw prediction on second image
     pred_corners = draw_boxes(prediction, calib, pred_3d_axes)
@@ -124,18 +135,34 @@ def visualize(dataset, frame_id, prediction, show_3d=False, output_dir=None):
         plt.close(pred_fig)
     else:
         plt.show()
-        #input()
+        raw_input()
+
+    if seg_mask is not None:
+        img = dataset.get_image(frame_id)
+        img = cv2.resize(img, (1200, 360))
+        seg_img = add_mask_to_img(img, seg_mask)
+        filename = os.path.join(output_dir, 'result_seg_image/%06d.png' % frame_id)
+        cv2.imwrite(filename, seg_img)
 
     if show_3d:
         # 3d visualization
         pc_velo = dataset.get_lidar(frame_id)
+        image = dataset.get_image(frame_id)
+        img_height, img_width = image.shape[0:2]
+        _, _, img_fov_inds = get_lidar_in_image_fov(pc_velo[:,0:3],
+            calib, 0, 0, img_width, img_height, True)
+        pc_velo = pc_velo[img_fov_inds, :]
         boxes3d_velo = []
+        mask = np.zeros((len(pc_velo),))
         for corners in pred_corners:
             pts_velo = calib.project_rect_to_velo(corners)
             boxes3d_velo.append(pts_velo)
-        fig = draw_lidar(pc_velo)
+            _,obj_mask = extract_pc_in_box3d(pc_velo, pts_velo)
+            mask = np.logical_or(mask, obj_mask)
+        fig = draw_lidar(pc_velo, pts_color=(1, 1, 1))
+        fig = draw_lidar(pc_velo[mask==1], fig=fig, pts_color=(1, 0, 0))
         fig = draw_gt_boxes3d(boxes3d_velo, fig, draw_text=False, color=(1, 1, 1))
-        #input()
+        # raw_input()
         if output_dir:
             filename = os.path.join(output_dir, 'result_3d_image/%06d.png' % frame_id)
             mlab.savefig(filename, figure=fig)
@@ -177,11 +204,19 @@ if __name__ == '__main__':
             os.makedirs(os.path.join(args.output_dir, 'result_2d_image'))
         if not os.path.exists(os.path.join(args.output_dir, 'result_3d_image')):
             os.makedirs(os.path.join(args.output_dir, 'result_3d_image'))
+        if not os.path.exists(os.path.join(args.output_dir, 'result_seg_image')):
+            os.makedirs(os.path.join(args.output_dir, 'result_seg_image'))
 
-    for f in os.listdir(args.detection_path):
+    detection_path = os.path.join(args.detection_path, 'data')
+    seg_path = os.path.join(args.detection_path, 'segmentation_result')
+    has_seg_result = os.path.isdir(seg_path)
+    for f in os.listdir(detection_path):
         print('processing %s' % f)
         data_idx = f.replace('.txt', '')
-        fname = os.path.join(args.detection_path, f)
+        fname = os.path.join(detection_path, f)
         objs = load_result(dataset, fname, data_idx)
-
-        visualize(dataset, int(data_idx), objs, show_3d=False, output_dir=args.output_dir)
+        if has_seg_result:
+            seg_mask = cv2.imread(os.path.join(seg_path, data_idx+'.png'), cv2.IMREAD_GRAYSCALE)
+        else:
+            seg_mask = None
+        visualize(dataset, int(data_idx), objs, seg_mask, show_3d=True, output_dir=args.output_dir)

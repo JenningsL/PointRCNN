@@ -68,34 +68,33 @@ def draw_lidar(pc, color=None, fig=None, bgcolor=(0,0,0), pts_scale=1, pts_mode=
     mlab.plot3d([0, axes[2,0]], [0, axes[2,1]], [0, axes[2,2]], color=(0,0,1), tube_radius=None, figure=fig)
 
     # draw fov (todo: update to real sensor spec.)
-    fov=np.array([  # 45 degree
-        [20., 20., 0.,0.],
-        [20.,-20., 0.,0.],
-    ],dtype=np.float64)
+    # fov=np.array([  # 45 degree
+    #     [20., 20., 0.,0.],
+    #     [20.,-20., 0.,0.],
+    # ],dtype=np.float64)
+    #
+    # mlab.plot3d([0, fov[0,0]], [0, fov[0,1]], [0, fov[0,2]], color=(1,1,1), tube_radius=None, line_width=1, figure=fig)
+    # mlab.plot3d([0, fov[1,0]], [0, fov[1,1]], [0, fov[1,2]], color=(1,1,1), tube_radius=None, line_width=1, figure=fig)
+    #
+    # # draw square region
+    # TOP_Y_MIN=-20
+    # TOP_Y_MAX=20
+    # TOP_X_MIN=0
+    # TOP_X_MAX=40
+    # TOP_Z_MIN=-2.0
+    # TOP_Z_MAX=0.4
+    #
+    # x1 = TOP_X_MIN
+    # x2 = TOP_X_MAX
+    # y1 = TOP_Y_MIN
+    # y2 = TOP_Y_MAX
+    # mlab.plot3d([x1, x1], [y1, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=0.1, line_width=1, figure=fig)
+    # mlab.plot3d([x2, x2], [y1, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=0.1, line_width=1, figure=fig)
+    # mlab.plot3d([x1, x2], [y1, y1], [0,0], color=(0.5,0.5,0.5), tube_radius=0.1, line_width=1, figure=fig)
+    # mlab.plot3d([x1, x2], [y2, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=0.1, line_width=1, figure=fig)
 
-    mlab.plot3d([0, fov[0,0]], [0, fov[0,1]], [0, fov[0,2]], color=(1,1,1), tube_radius=None, line_width=1, figure=fig)
-    mlab.plot3d([0, fov[1,0]], [0, fov[1,1]], [0, fov[1,2]], color=(1,1,1), tube_radius=None, line_width=1, figure=fig)
-
-    # draw square region
-    TOP_Y_MIN=-20
-    TOP_Y_MAX=20
-    TOP_X_MIN=0
-    TOP_X_MAX=40
-    TOP_Z_MIN=-2.0
-    TOP_Z_MAX=0.4
-
-    x1 = TOP_X_MIN
-    x2 = TOP_X_MAX
-    y1 = TOP_Y_MIN
-    y2 = TOP_Y_MAX
-    mlab.plot3d([x1, x1], [y1, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=0.1, line_width=1, figure=fig)
-    mlab.plot3d([x2, x2], [y1, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=0.1, line_width=1, figure=fig)
-    mlab.plot3d([x1, x2], [y1, y1], [0,0], color=(0.5,0.5,0.5), tube_radius=0.1, line_width=1, figure=fig)
-    mlab.plot3d([x1, x2], [y2, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=0.1, line_width=1, figure=fig)
-
-    #mlab.orientation_axes()
-    if display:
-        mlab.view(azimuth=180, elevation=70, focalpoint=[ 12.0909996 , -1.04700089, -2.03249991], distance=62.0, figure=fig)
+    mlab.orientation_axes()
+    mlab.view(azimuth=180, elevation=70, focalpoint=[ 12.0909996 , -1.04700089, -2.03249991], distance=62.0, figure=fig)
     return fig
 
 def draw_gt_boxes3d(gt_boxes3d, fig, color=(1,1,1), line_width=1, draw_text=True, text_scale=(1,1,1), color_list=None):
@@ -128,7 +127,7 @@ def draw_gt_boxes3d(gt_boxes3d, fig, color=(1,1,1), line_width=1, draw_text=True
             i,j=k,k+4
             mlab.plot3d([b[i,0], b[j,0]], [b[i,1], b[j,1]], [b[i,2], b[j,2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
     #mlab.show(1)
-    #mlab.view(azimuth=180, elevation=70, focalpoint=[ 12.0909996 , -1.04700089, -2.03249991], distance=62.0, figure=fig)
+    mlab.view(azimuth=180, elevation=45, focalpoint=[0, 0, 20], distance=50.0, figure=fig)
     return fig
 
 
