@@ -1,5 +1,5 @@
 # PointRCNN
-Warning: This is **not** the official implementation of PointRCNN, and it is still in progress.
+This is **not** the official implementation of PointRCNN. We add an image segmentation network to improve recall of point cloud segmentation. The 2-stage network is frustum pointNet. Any pull request is appreciated.
 ## Introduction
 A 3D object detector that takes point cloud and RGB image(optional) as input.  
 
@@ -46,12 +46,25 @@ For testing, download KITTI video sequence and calibration files, and put the fo
   velodyne_points/
 ```
 
+**[Optional] Scene Augmentation**
+
+Our implementation also supports using augmented scene point cloud for training RPN, please refer to the official implementation of [PointRCNN](https://github.com/sshaoshuai/PointRCNN). After generating the data, just put the `aug_scene/` folder under `dataset/KITTI/object`. If you don't want to use it, just set `use_aug_scene=False` when using `rpn_dataset`. 
+
+**Image segmentaion annotation**
+
+Our image segmentation network is DeelabV3+ official implementation. The senmantic segmentation annotation is obtained by the following steps:
++ Pointcloud completion using [ip_basic](https://github.com/kujason/ip_basic)
++ Project 3D points to image plane to get segmentation annotation
+Codes for finetuning can be founded at [deeplab_kitti_object](https://github.com/JenningsL/deeplab_kitti_object). Or you can just use your own image segmentation network.
+
 ### Train
 There are 3 sub-model to be trained.
 
 **Region Proposal Network**
 
-`python train/train_rpn.py --gpu 0 --decay_step 30000 --decay_rate 0.8 --batch_size=4 --learning_rate 0.002 --log_dir log_rpn --num_point 16384`
+```
+sh train_rpn.sh
+```
 
 **Frustum Pointnet**
 
@@ -64,14 +77,17 @@ For now deeplabv3+ is used and finetune on KITTI 3D object dataset
 ### Evaluate
 
 **Region Proposal Network**
-`python test/test_rpn.py --gpu 0 --batch_size=1 --model_path ${RPN_MODEL_PATH} --img_model_path ${IMG_MODEL_PATH} --split train --kitti_path ${KITTI_DATA_PATH}`
+
+```
+sh test_rpn.sh
+```
+
 This will save the output of RPN and Image segmentation network to `./rcnn_data_train` for training the RCNN network.
 
 **Frustum Pointnet**
 
 ```
-python train/test_frustum.py --gpu 0 --model_path log_frustum/model.ckpt --output val_results --num_point 512 --batch_size 12 --dump_result --kitti_path ./Kitti/object --split val
-evaluate_object_3d_offline ./Kitti/object/training/label_2/ val_results
+test_frustum.sh
 ```
 
 ### Test
@@ -79,26 +95,39 @@ evaluate_object_3d_offline ./Kitti/object/training/label_2/ val_results
 **End to end**
 
 ```
-IMG_MODEL="./frozen_inference_graph.pb"
-RPN_MODEL="log_rpn/model.ckpt"
-RCNN_MODEL="log_frustum/model.ckpt"
-python test/detect.py --gpu 0 --rpn_model ${RPN_MODEL} --img_seg_model ${IMG_MODEL} --rcnn_model ${RCNN_MODEL} --split test --kitti_path ./Kitti/2011_10_03 --output test_result_2011_10_03
+sh test.sh
 ```
 
 ## Evaluation
-### Recall of RPN
-|    Method  | Avg. Recall(IOU>0.5)|
-| ---------- | ------------------- |
-| Point Only |                 81% |
-| Point+Image|                 86% |
+### Point cloud segmentation
+|    Method  | Coverage | Recall | Precision |
+| ---------- | -------- | ------ | --------- |
+| Point Only | 89.7%    | 93.4%  | 82.2%     |
+| Point+Image| 93.5%    | 97.0%  | 76.6%     |
+Coverage means the percentage of object that have at least one point being detected.
 
-### mAP on Val Set
+### Recall of RPN
+Setting: IoU >= 0.5, 100 proposal
+
+|    Method  | 3 Classes Recall    | Car moderate | Pedastrian Moderate | Cyclist Moderate |
+| ---------- | ------------------- | ------------ | ------------------- | ---------------- |
+| Point+Image|                 89% | 96%          | 77%                 | 52%              |
+
+### AP on Val Set
 
 |    Class   | 3D mAP(Easy, Moderate, Hard)  | BEV mAP(Easy, Moderate, Hard)  |
 | ---------- | ----------------------------- |--------------------------------|
-| Car        | 70.186958 63.863361 63.612400 |87.072685 78.929276 78.646278|
-| Pedestrain | 51.292336 44.874256 37.747238 |63.765102 56.358772 48.899441|
-| Cyclist    | 61.176849 42.489197 42.025532 |69.161484 42.851925 42.492092|
+| Car        | 76.56 70.20 64.00 | 86.32 78.42 78.07 |
+| Pedestrain | 70.23 63.09 55.77 | 73.34 65.86 57.94 |
+| Cyclist    | 76.89 50.91 50.28 | 78.27 59.00 51.63 |
+
+## Pretrained Models
+
+| Model | Link |
+| ----- | ---- |
+| RPN |[log_rpn.zip](https://drive.google.com/open?id=1xeBRkwGeF55O41_aht_ROB3wcwnCThHU)| 
+| Image SegNet |[log_rpn.zip](https://drive.google.com/open?id=1LhR5p1klFX36IV0hAb54q66pOIsWfTNw)| 
+| Frustum PointNet |[log_frustum.zip](https://drive.google.com/open?id=1K5cUgxwLvEDOKDkuYMbYPLa3FGbxGKr3)| 
 
 
 ## Results
