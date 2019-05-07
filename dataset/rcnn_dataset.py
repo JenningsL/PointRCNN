@@ -36,7 +36,7 @@ class Dataset(object):
         types=type_whitelist, difficulties=difficulties_whitelist):
         self.npoints = npoints
         self.kitti_path = kitti_path
-        self.data_dir = os.path.join('./rcnn_data')
+        self.data_dir = './rcnn_data_'+split
         #self.batch_size = batch_size
         self.split = split
         self.is_training = is_training

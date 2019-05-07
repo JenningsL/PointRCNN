@@ -117,14 +117,17 @@ class RCNN(object):
             is_training=is_training, scope='rcnn-cls-fc2', bn_decay=self.bn_decay)
         cls_out = tf_util.conv1d(cls_net, NUM_OBJ_CLASSES, 1,
             padding='VALID', activation_fn=None, scope='conv1d-fc2')
+        cls_out = tf.squeeze(cls_out, axis=1)
         self.end_points['cls_logits'] = cls_out
 
         # Box estimation
-        cls_label_pred = tf.argmax(tf.nn.softmax(cls_net), axis=1)
-        one_hot_pred = tf.one_hot(cls_label_pred, NUM_OBJ_CLASSES)
-        one_hot_gt = tf.one_hot(self.placeholders['class_labels'], NUM_OBJ_CLASSES)
+        cls_label_pred = tf.argmax(tf.nn.softmax(cls_net), axis=-1)
+        one_hot_pred = tf.one_hot(cls_label_pred, NUM_OBJ_CLASSES, axis=-1) # (B, 1, NUM_OBJ_CLASSES)
+        one_hot_gt = tf.one_hot(self.placeholders['class_labels'], NUM_OBJ_CLASSES, axis=-1) # (B, NUM_OBJ_CLASSES)
+        one_hot_gt = tf.expand_dims(one_hot_gt, axis=1)
         one_hot_vec = tf.cond(is_training, lambda: one_hot_gt, lambda: one_hot_pred)
-        est_intput = tf.concat([point_feats, one_hot_vec], axis=1)
+        one_hot_vec.set_shape([batch_size, 1, NUM_OBJ_CLASSES])
+        est_intput = tf.concat([point_feats, one_hot_vec], axis=-1)
         box_net = tf_util.conv1d(est_intput, 256, 1, padding='VALID', bn=True,
             is_training=is_training, scope='rcnn-box-fc1', bn_decay=self.bn_decay)
         # cls_net = tf_util.dropout(cls_net, keep_prob=0.5,
@@ -137,6 +140,7 @@ class RCNN(object):
         # next NUM_SIZE_CLUSTER*4: size cluster class scores and residuals(l,w,h)
         box_out = tf_util.conv1d(box_net, NUM_CENTER_BIN*2*2+1+NUM_HEADING_BIN*2+NUM_SIZE_CLUSTER*4, 1,
             padding='VALID', activation_fn=None, scope='rcnn-box-out')
+        box_out = tf.squeeze(box_out, axis=1)
         self.parse_output_to_tensors(box_out)
         self.get_output_boxes()
 
@@ -280,7 +284,7 @@ class RCNN(object):
         res_weight = 1
         total_loss = obj_cls_weight * cls_loss + \
             cls_weight * (center_x_cls_loss + center_z_cls_loss + heading_class_loss + size_class_loss) + \
-            res_weight * (center_x_res_loss + center_z_res_loss + center_y_res_loss + heading_res_loss + size_res_loss)
+            res_weight * (0.1*center_x_res_loss + 0.1*center_z_res_loss + center_y_res_loss + 0.1*heading_res_loss + size_res_loss)
 
         loss_endpoints = {
             #'size_class_loss': size_class_loss,
