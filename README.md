@@ -104,6 +104,7 @@ sh test.sh
 | ---------- | -------- | ------ | --------- |
 | Point Only | 89.7%    | 93.4%  | 82.2%     |
 | Point+Image| 93.5%    | 97.0%  | 76.6%     |
+
 Coverage means the percentage of object that have at least one point being detected.
 
 ### Recall of RPN
