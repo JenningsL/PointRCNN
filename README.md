@@ -3,6 +3,10 @@ This is **not** the official implementation of PointRCNN. We add an image segmen
 ## Introduction
 A 3D object detector that takes point cloud and RGB image(optional) as input.  
 
+## Results
+[![video1](https://i.ytimg.com/vi/T-LzoQpt2N4/sddefault.jpg?sqp=-oaymwEjCNACELwBSFryq4qpAxUIARUAAAAAGAElAADIQj0AgKJDeAE=&rs=AOn4CLA5aI2BbvOQ5gVRctaG5pO9azh0Eg)](https://youtu.be/T-LzoQpt2N4)
+[![video2](https://i.ytimg.com/vi/CVSs2cEkKgk/sddefault.jpg?sqp=-oaymwEjCNACELwBSFryq4qpAxUIARUAAAAAGAElAADIQj0AgKJDeAE=&rs=AOn4CLCD9mHA906oK0XJFPlIubSJNuWzMQ)](https://youtu.be/CVSs2cEkKgk)
+
 ## Architecture
 1. Perform foreground point segmentation on the whole point cloud
 2. Output a 3D proposal box for every foreground point
@@ -129,11 +133,6 @@ Setting: IoU >= 0.5, 100 proposal
 | RPN |[log_rpn.zip](https://drive.google.com/open?id=1xeBRkwGeF55O41_aht_ROB3wcwnCThHU)| 
 | Image SegNet |[log_rpn.zip](https://drive.google.com/open?id=1LhR5p1klFX36IV0hAb54q66pOIsWfTNw)| 
 | Frustum PointNet |[log_frustum.zip](https://drive.google.com/open?id=1K5cUgxwLvEDOKDkuYMbYPLa3FGbxGKr3)| 
-
-
-## Results
-[![video1](https://i.ytimg.com/vi/T-LzoQpt2N4/maxresdefault.jpg?sqp=-oaymwEjCNACELwBSFryq4qpAxUIARUAAAAAGAElAADIQj0AgKJDeAE=&rs=AOn4CLA5aI2BbvOQ5gVRctaG5pO9azh0Eg)](https://youtu.be/T-LzoQpt2N4)
-[![video2](https://i.ytimg.com/vi/CVSs2cEkKgk/maxresdefault.jpg?sqp=-oaymwEjCNACELwBSFryq4qpAxUIARUAAAAAGAElAADIQj0AgKJDeAE=&rs=AOn4CLCD9mHA906oK0XJFPlIubSJNuWzMQ)](https://youtu.be/CVSs2cEkKgk)
 
 ## Reference
 - [Frustum PointNets for 3D Object Detection from RGB-D Data](https://arxiv.org/abs/1711.08488)
