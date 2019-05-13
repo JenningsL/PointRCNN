@@ -211,12 +211,19 @@ if __name__ == '__main__':
     seg_path = os.path.join(args.detection_path, 'segmentation_result')
     has_seg_result = os.path.isdir(seg_path)
     for f in os.listdir(detection_path):
-        print('processing %s' % f)
         data_idx = f.replace('.txt', '')
         fname = os.path.join(detection_path, f)
         objs = load_result(dataset, fname, data_idx)
+        result_2d_image = os.path.join(args.output_dir, 'result_2d_image', data_idx+'.png')
+        result_3d_image = os.path.join(args.output_dir, 'result_3d_image', data_idx+'.png')
+        result_seg_image = os.path.join(args.output_dir, 'result_seg_image', data_idx+'.png')
+        if os.path.exists(result_2d_image) and os.path.exists(result_3d_image) \
+            and os.path.exists(result_seg_image):
+            print('skip frame {0} as result exists'.format(data_idx))
+            continue
         if has_seg_result:
             seg_mask = cv2.imread(os.path.join(seg_path, data_idx+'.png'), cv2.IMREAD_GRAYSCALE)
         else:
             seg_mask = None
+        print('processing %s' % f)
         visualize(dataset, int(data_idx), objs, seg_mask, show_3d=True, output_dir=args.output_dir)
